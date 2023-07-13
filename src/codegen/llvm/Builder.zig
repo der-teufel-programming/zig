@@ -3974,8 +3974,8 @@ fn gepConstAssumeCapacity(
             for (llvm_indices, indices) |*llvm_index, index| llvm_index.* = index.toLlvm(self);
 
             self.llvm.constants.appendAssumeCapacity(switch (kind) {
-                .normal => &llvm.Type.constGEP,
-                .inbounds => &llvm.Type.constInBoundsGEP,
+                .normal => llvm.Type.constGEP,
+                .inbounds => llvm.Type.constInBoundsGEP,
             }(ty.toLlvm(self), base.toLlvm(self), llvm_indices.ptr, @intCast(indices.len)));
         }
     }
