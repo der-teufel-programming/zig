@@ -579,6 +579,7 @@ test "enum literal cast to enum" {
 
     var color1: Color = .Auto;
     var color2 = Color.Auto;
+    _ = .{ &color1, &color2 };
     try expect(color1 == color2);
 }
 
@@ -646,12 +647,12 @@ test "non-exhaustive enum" {
                 else => true,
             });
 
-            try expect(@typeInfo(E).Enum.fields.len == 2);
+            try expect(@typeInfo(E).@"enum".fields.len == 2);
             e = @as(E, @enumFromInt(12));
             try expect(@intFromEnum(e) == 12);
             e = @as(E, @enumFromInt(y));
             try expect(@intFromEnum(e) == 52);
-            try expect(@typeInfo(E).Enum.is_exhaustive == false);
+            try expect(@typeInfo(E).@"enum".is_exhaustive == false);
         }
     };
     try S.doTheTest(52);
@@ -663,14 +664,15 @@ test "empty non-exhaustive enum" {
         const E = enum(u8) { _ };
 
         fn doTheTest(y: u8) !void {
-            var e = @as(E, @enumFromInt(y));
+            var e: E = @enumFromInt(y);
+            _ = &e;
             try expect(switch (e) {
                 _ => true,
             });
             try expect(@intFromEnum(e) == y);
 
-            try expect(@typeInfo(E).Enum.fields.len == 0);
-            try expect(@typeInfo(E).Enum.is_exhaustive == false);
+            try expect(@typeInfo(E).@"enum".fields.len == 0);
+            try expect(@typeInfo(E).@"enum".is_exhaustive == false);
         }
     };
     try S.doTheTest(42);
@@ -706,8 +708,8 @@ test "single field non-exhaustive enum" {
             });
 
             try expect(@intFromEnum(@as(E, @enumFromInt(y))) == y);
-            try expect(@typeInfo(E).Enum.fields.len == 1);
-            try expect(@typeInfo(E).Enum.is_exhaustive == false);
+            try expect(@typeInfo(E).@"enum".fields.len == 1);
+            try expect(@typeInfo(E).@"enum".is_exhaustive == false);
         }
     };
     try S.doTheTest(23);
@@ -771,12 +773,12 @@ test "set enum tag type" {
     {
         var x = Small.One;
         x = Small.Two;
-        try comptime expect(Tag(Small) == u2);
+        comptime assert(Tag(Small) == u2);
     }
     {
         var x = Small2.One;
         x = Small2.Two;
-        try comptime expect(Tag(Small2) == u2);
+        comptime assert(Tag(Small2) == u2);
     }
 }
 
@@ -793,7 +795,7 @@ test "enum with 1 field but explicit tag type should still have the tag type" {
     const Enum = enum(u8) {
         B = 2,
     };
-    try comptime expect(@sizeOf(Enum) == @sizeOf(u8));
+    comptime assert(@sizeOf(Enum) == @sizeOf(u8));
 }
 
 test "signed integer as enum tag" {
@@ -832,12 +834,12 @@ test "enum with comptime_int tag type" {
         Two = 2,
         Three = 1,
     };
-    try comptime expect(Tag(Enum) == comptime_int);
+    comptime assert(Tag(Enum) == comptime_int);
 }
 
 test "enum with one member default to u0 tag type" {
     const E0 = enum { X };
-    try comptime expect(Tag(E0) == u0);
+    comptime assert(Tag(E0) == u0);
 }
 
 const EnumWithOneMember = enum { Eof };
@@ -858,6 +860,7 @@ test "comparison operator on enum with one member is comptime-known" {
 const State = enum { Start };
 test "switch on enum with one member is comptime-known" {
     var state = State.Start;
+    _ = &state;
     switch (state) {
         State.Start => return,
     }
@@ -917,7 +920,8 @@ test "enum literal casting to tagged union" {
 
     var t = true;
     var x: Arch = .x86_64;
-    var y = if (t) x else .x86_64;
+    _ = .{ &t, &x };
+    const y = if (t) x else .x86_64;
     switch (y) {
         .x86_64 => {},
         else => @panic("fail"),
@@ -940,6 +944,7 @@ test "constant enum initialization with differing sizes" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     try test3_1(test3_foo);
     try test3_2(test3_bar);
@@ -983,9 +988,10 @@ test "@tagName" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     try expect(mem.eql(u8, testEnumTagNameBare(BareNumber.Three), "Three"));
-    try comptime expect(mem.eql(u8, testEnumTagNameBare(BareNumber.Three), "Three"));
+    comptime assert(mem.eql(u8, testEnumTagNameBare(BareNumber.Three), "Three"));
 }
 
 fn testEnumTagNameBare(n: anytype) []const u8 {
@@ -999,9 +1005,10 @@ test "@tagName non-exhaustive enum" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     try expect(mem.eql(u8, testEnumTagNameBare(NonExhaustive.B), "B"));
-    try comptime expect(mem.eql(u8, testEnumTagNameBare(NonExhaustive.B), "B"));
+    comptime assert(mem.eql(u8, testEnumTagNameBare(NonExhaustive.B), "B"));
 }
 const NonExhaustive = enum(u8) { A, B, _ };
 
@@ -1010,6 +1017,7 @@ test "@tagName is null-terminated" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest(n: BareNumber) !void {
@@ -1025,12 +1033,14 @@ test "tag name with assigned enum values" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const LocalFoo = enum(u8) {
         A = 1,
         B = 0,
     };
     var b = LocalFoo.B;
+    _ = &b;
     try expect(mem.eql(u8, @tagName(b), "B"));
 }
 
@@ -1039,7 +1049,7 @@ test "@tagName on enum literals" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     try expect(mem.eql(u8, @tagName(.FooBar), "FooBar"));
-    try comptime expect(mem.eql(u8, @tagName(.FooBar), "FooBar"));
+    comptime assert(mem.eql(u8, @tagName(.FooBar), "FooBar"));
 }
 
 test "tag name with signed enum values" {
@@ -1047,6 +1057,7 @@ test "tag name with signed enum values" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const LocalFoo = enum(isize) {
         alfa = 62,
@@ -1055,6 +1066,7 @@ test "tag name with signed enum values" {
         delta = 65,
     };
     var b = LocalFoo.bravo;
+    _ = &b;
     try expect(mem.eql(u8, @tagName(b), "bravo"));
 }
 
@@ -1095,7 +1107,7 @@ test "bit field access with enum fields" {
     try expect(getA(&data) == A.Two);
     try expect(getB(&data) == B.Three3);
     try expect(getC(&data) == C.Four4);
-    try comptime expect(@sizeOf(BitFieldOfEnums) == 1);
+    comptime assert(@sizeOf(BitFieldOfEnums) == 1);
 
     data.b = B.Four3;
     try expect(data.b == B.Four3);
@@ -1130,18 +1142,19 @@ test "tag name functions are unique" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     {
         const E = enum { a, b };
         var b = E.a;
         var a = @tagName(b);
-        _ = a;
+        _ = .{ &a, &b };
     }
     {
         const E = enum { a, b, c, d, e, f };
         var b = E.a;
         var a = @tagName(b);
-        _ = a;
+        _ = .{ &a, &b };
     }
 }
 
@@ -1189,6 +1202,7 @@ test "Non-exhaustive enum with nonstandard int size behaves correctly" {
 test "runtime int to enum with one possible value" {
     const E = enum { one };
     var runtime: usize = 0;
+    _ = &runtime;
     if (@as(E, @enumFromInt(runtime)) != .one) {
         @compileError("test failed");
     }
@@ -1217,4 +1231,84 @@ test "auto-numbered enum with signed tag type" {
     try std.testing.expectEqual(E.b, @as(E, @enumFromInt(@as(u32, 1))));
     try std.testing.expectEqualStrings("a", @tagName(E.a));
     try std.testing.expectEqualStrings("b", @tagName(E.b));
+}
+
+test "lazy initialized field" {
+    try std.testing.expectEqual(@as(u8, @alignOf(struct {})), getLazyInitialized(.a));
+}
+
+fn getLazyInitialized(param: enum(u8) {
+    a = @bitCast(packed struct(u8) { a: u8 }{ .a = @alignOf(struct {}) }),
+}) u8 {
+    return @intFromEnum(param);
+}
+
+test "Non-exhaustive enum backed by comptime_int" {
+    const E = enum(comptime_int) { a, b, c, _ };
+    comptime var e: E = .a;
+    e = @as(E, @enumFromInt(378089457309184723749));
+    try expect(@intFromEnum(e) == 378089457309184723749);
+}
+
+test "matching captures causes enum equivalence" {
+    const S = struct {
+        fn Nonexhaustive(comptime I: type) type {
+            const UTag = @Type(.{ .int = .{
+                .signedness = .unsigned,
+                .bits = @typeInfo(I).int.bits,
+            } });
+            return enum(UTag) { _ };
+        }
+    };
+
+    comptime assert(S.Nonexhaustive(u8) == S.Nonexhaustive(i8));
+    comptime assert(S.Nonexhaustive(u16) == S.Nonexhaustive(i16));
+    comptime assert(S.Nonexhaustive(u8) != S.Nonexhaustive(u16));
+
+    const a: S.Nonexhaustive(u8) = @enumFromInt(123);
+    const b: S.Nonexhaustive(i8) = @enumFromInt(123);
+    comptime assert(@TypeOf(a) == @TypeOf(b));
+    try expect(@intFromEnum(a) == @intFromEnum(b));
+}
+
+test "large enum field values" {
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
+
+    {
+        const E = enum(u64) { min = std.math.minInt(u64), max = std.math.maxInt(u64) };
+        var e: E = .min;
+        try expect(e == .min);
+        try expect(@intFromEnum(e) == std.math.minInt(u64));
+        e = .max;
+        try expect(e == .max);
+        try expect(@intFromEnum(e) == std.math.maxInt(u64));
+    }
+    {
+        const E = enum(i64) { min = std.math.minInt(i64), max = std.math.maxInt(i64) };
+        var e: E = .min;
+        try expect(e == .min);
+        try expect(@intFromEnum(e) == std.math.minInt(i64));
+        e = .max;
+        try expect(e == .max);
+        try expect(@intFromEnum(e) == std.math.maxInt(i64));
+    }
+    {
+        const E = enum(u128) { min = std.math.minInt(u128), max = std.math.maxInt(u128) };
+        var e: E = .min;
+        try expect(e == .min);
+        try expect(@intFromEnum(e) == std.math.minInt(u128));
+        e = .max;
+        try expect(e == .max);
+        try expect(@intFromEnum(e) == std.math.maxInt(u128));
+    }
+    {
+        const E = enum(i128) { min = std.math.minInt(i128), max = std.math.maxInt(i128) };
+        var e: E = .min;
+        try expect(e == .min);
+        try expect(@intFromEnum(e) == std.math.minInt(i128));
+        e = .max;
+        try expect(e == .max);
+        try expect(@intFromEnum(e) == std.math.maxInt(i128));
+    }
 }

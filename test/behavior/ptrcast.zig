@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const expect = std.testing.expect;
+const assert = std.debug.assert;
 const native_endian = builtin.target.cpu.arch.endian();
 
 test "reinterpret bytes as integer with nonzero offset" {
@@ -13,8 +14,8 @@ test "reinterpret bytes as integer with nonzero offset" {
 fn testReinterpretBytesAsInteger() !void {
     const bytes = "\x12\x34\x56\x78\xab";
     const expected = switch (native_endian) {
-        .Little => 0xab785634,
-        .Big => 0x345678ab,
+        .little => 0xab785634,
+        .big => 0x345678ab,
     };
     try expect(@as(*align(1) const u32, @ptrCast(bytes[1..5])).* == expected);
 }
@@ -48,8 +49,8 @@ fn testReinterpretStructWrappedBytesAsInteger() !void {
     const S = struct { bytes: [5:0]u8 };
     const obj = S{ .bytes = "\x12\x34\x56\x78\xab".* };
     const expected = switch (native_endian) {
-        .Little => 0xab785634,
-        .Big => 0x345678ab,
+        .little => 0xab785634,
+        .big => 0x345678ab,
     };
     try expect(@as(*align(1) const u32, @ptrCast(obj.bytes[1..5])).* == expected);
 }
@@ -71,8 +72,8 @@ fn testReinterpretBytesAsExternStruct() !void {
         c: u8,
     };
 
-    var ptr = @as(*const S, @ptrCast(&bytes));
-    var val = ptr.c;
+    const ptr: *const S = @ptrCast(&bytes);
+    const val = ptr.c;
     try expect(val == 5);
 }
 
@@ -95,8 +96,8 @@ fn testReinterpretExternStructAsExternStruct() !void {
         a: u32 align(2),
         c: u8,
     };
-    var ptr = @as(*const S2, @ptrCast(&bytes));
-    var val = ptr.c;
+    const ptr: *const S2 = @ptrCast(&bytes);
+    const val = ptr.c;
     try expect(val == 5);
 }
 
@@ -121,8 +122,8 @@ fn testReinterpretOverAlignedExternStructAsExternStruct() !void {
         a2: u16,
         c: u8,
     };
-    var ptr = @as(*const S2, @ptrCast(&bytes));
-    var val = ptr.c;
+    const ptr: *const S2 = @ptrCast(&bytes);
+    const val = ptr.c;
     try expect(val == 5);
 }
 
@@ -130,7 +131,6 @@ test "lower reinterpreted comptime field ptr (with under-aligned fields)" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
     // Test lowering a field ptr
     comptime var bytes align(2) = [_]u8{ 1, 2, 3, 4, 5, 6 };
@@ -139,13 +139,13 @@ test "lower reinterpreted comptime field ptr (with under-aligned fields)" {
         c: u8,
     };
     comptime var ptr = @as(*const S, @ptrCast(&bytes));
-    var val = &ptr.c;
+    const val = &ptr.c;
     try expect(val.* == 5);
 
     // Test lowering an elem ptr
     comptime var src_value = S{ .a = 15, .c = 5 };
     comptime var ptr2 = @as(*[@sizeOf(S)]u8, @ptrCast(&src_value));
-    var val2 = &ptr2[4];
+    const val2 = &ptr2[4];
     try expect(val2.* == 5);
 }
 
@@ -153,7 +153,6 @@ test "lower reinterpreted comptime field ptr" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
     // Test lowering a field ptr
     comptime var bytes align(4) = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
@@ -162,13 +161,13 @@ test "lower reinterpreted comptime field ptr" {
         c: u8,
     };
     comptime var ptr = @as(*const S, @ptrCast(&bytes));
-    var val = &ptr.c;
+    const val = &ptr.c;
     try expect(val.* == 5);
 
     // Test lowering an elem ptr
     comptime var src_value = S{ .a = 15, .c = 5 };
     comptime var ptr2 = @as(*[@sizeOf(S)]u8, @ptrCast(&src_value));
-    var val2 = &ptr2[4];
+    const val2 = &ptr2[4];
     try expect(val2.* == 5);
 }
 
@@ -178,7 +177,7 @@ test "reinterpret struct field at comptime" {
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
     const numNative = comptime Bytes.init(0x12345678);
-    if (native_endian != .Little) {
+    if (native_endian != .little) {
         try expect(std.mem.eql(u8, &[_]u8{ 0x12, 0x34, 0x56, 0x78 }, &numNative.bytes));
     } else {
         try expect(std.mem.eql(u8, &[_]u8{ 0x78, 0x56, 0x34, 0x12 }, &numNative.bytes));
@@ -203,7 +202,7 @@ test "ptrcast of const integer has the correct object size" {
     const is_bytes = @as([*]const u8, @ptrCast(&is_value))[0..@sizeOf(isize)];
     if (@sizeOf(isize) == 8) {
         switch (native_endian) {
-            .Little => {
+            .little => {
                 try expect(is_bytes[0] == 0xff);
                 try expect(is_bytes[1] == 0xff);
                 try expect(is_bytes[2] == 0xff);
@@ -214,7 +213,7 @@ test "ptrcast of const integer has the correct object size" {
                 try expect(is_bytes[6] == 0xff);
                 try expect(is_bytes[7] == 0x7f);
             },
-            .Big => {
+            .big => {
                 try expect(is_bytes[0] == 0x7f);
                 try expect(is_bytes[1] == 0xff);
                 try expect(is_bytes[2] == 0xff);
@@ -235,9 +234,9 @@ test "implicit optional pointer to optional anyopaque pointer" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
 
     var buf: [4]u8 = "aoeu".*;
-    var x: ?[*]u8 = &buf;
-    var y: ?*anyopaque = x;
-    var z = @as(*[4]u8, @ptrCast(y));
+    const x: ?[*]u8 = &buf;
+    const y: ?*anyopaque = x;
+    const z: *[4]u8 = @ptrCast(y);
     try expect(std.mem.eql(u8, z, "aoeu"));
 }
 
@@ -267,7 +266,8 @@ test "comptime @ptrCast a subset of an array, then write through it" {
         var buff: [16]u8 align(4) = undefined;
         const len_bytes = @as(*u32, @ptrCast(&buff));
         len_bytes.* = 16;
-        std.mem.copy(u8, buff[4..], "abcdef");
+        const source = "abcdef";
+        @memcpy(buff[4 .. 4 + source.len], source);
     }
 }
 
@@ -278,7 +278,7 @@ test "@ptrCast undefined value at comptime" {
         }
     };
     comptime {
-        var x = S.transmute([]u8, i32, undefined);
+        const x = S.transmute(u64, i32, undefined);
         _ = x;
     }
 }
@@ -292,4 +292,61 @@ test "comptime @ptrCast with packed struct leaves value unmodified" {
     const p: *const [1]u3 = @ptrCast(&st);
     try expect(p.*[0] == 6);
     try expect(st.three == 6);
+}
+
+test "@ptrCast restructures comptime-only array" {
+    {
+        const a3a2: [3][2]comptime_int = .{
+            .{ 1, 2 },
+            .{ 3, 4 },
+            .{ 5, 6 },
+        };
+        const a2a3: *const [2][3]comptime_int = @ptrCast(&a3a2);
+        comptime assert(a2a3[0][0] == 1);
+        comptime assert(a2a3[0][1] == 2);
+        comptime assert(a2a3[0][2] == 3);
+        comptime assert(a2a3[1][0] == 4);
+        comptime assert(a2a3[1][1] == 5);
+        comptime assert(a2a3[1][2] == 6);
+    }
+
+    {
+        const a6a1: [6][1]comptime_int = .{
+            .{1}, .{2}, .{3}, .{4}, .{5}, .{6},
+        };
+        const a1a2a3: *const [1][2][3]comptime_int = @ptrCast(&a6a1);
+        comptime assert(a1a2a3[0][0][0] == 1);
+        comptime assert(a1a2a3[0][0][1] == 2);
+        comptime assert(a1a2a3[0][0][2] == 3);
+        comptime assert(a1a2a3[0][1][0] == 4);
+        comptime assert(a1a2a3[0][1][1] == 5);
+        comptime assert(a1a2a3[0][1][2] == 6);
+    }
+
+    {
+        const a1: [1]comptime_int = .{123};
+        const raw: *const comptime_int = @ptrCast(&a1);
+        comptime assert(raw.* == 123);
+    }
+
+    {
+        const raw: comptime_int = 123;
+        const a1: *const [1]comptime_int = @ptrCast(&raw);
+        comptime assert(a1[0] == 123);
+    }
+}
+
+test "@ptrCast restructures sliced comptime-only array" {
+    const a3a2: [4][2]comptime_int = .{
+        .{ 1, 2 },
+        .{ 3, 4 },
+        .{ 5, 6 },
+        .{ 7, 8 },
+    };
+
+    const sub: *const [4]comptime_int = @ptrCast(a3a2[1..]);
+    comptime assert(sub[0] == 3);
+    comptime assert(sub[1] == 4);
+    comptime assert(sub[2] == 5);
+    comptime assert(sub[3] == 6);
 }

@@ -4,9 +4,9 @@ const root = @import("root");
 const assert = std.debug.assert;
 const testing = std.testing;
 const mem = std.mem;
-const os = std.os;
 const c = std.c;
 const Allocator = std.mem.Allocator;
+const windows = std.os.windows;
 
 pub const LoggingAllocator = @import("heap/logging_allocator.zig").LoggingAllocator;
 pub const loggingAllocator = @import("heap/logging_allocator.zig").loggingAllocator;
@@ -14,6 +14,7 @@ pub const ScopedLoggingAllocator = @import("heap/logging_allocator.zig").ScopedL
 pub const LogToWriterAllocator = @import("heap/log_to_writer_allocator.zig").LogToWriterAllocator;
 pub const logToWriterAllocator = @import("heap/log_to_writer_allocator.zig").logToWriterAllocator;
 pub const ArenaAllocator = @import("heap/arena_allocator.zig").ArenaAllocator;
+pub const GeneralPurposeAllocatorConfig = @import("heap/general_purpose_allocator.zig").Config;
 pub const GeneralPurposeAllocator = @import("heap/general_purpose_allocator.zig").GeneralPurposeAllocator;
 pub const Check = @import("heap/general_purpose_allocator.zig").Check;
 pub const WasmAllocator = @import("heap/WasmAllocator.zig");
@@ -38,27 +39,19 @@ const CAllocator = struct {
         }
     }
 
-    usingnamespace if (@hasDecl(c, "malloc_size"))
-        struct {
-            pub const supports_malloc_size = true;
-            pub const malloc_size = c.malloc_size;
-        }
-    else if (@hasDecl(c, "malloc_usable_size"))
-        struct {
-            pub const supports_malloc_size = true;
-            pub const malloc_size = c.malloc_usable_size;
-        }
-    else if (@hasDecl(c, "_msize"))
-        struct {
-            pub const supports_malloc_size = true;
-            pub const malloc_size = c._msize;
-        }
-    else
-        struct {
-            pub const supports_malloc_size = false;
-        };
+    pub const supports_malloc_size = @TypeOf(malloc_size) != void;
+    pub const malloc_size = if (@TypeOf(c.malloc_size) != void)
+        c.malloc_size
+    else if (@TypeOf(c.malloc_usable_size) != void)
+        c.malloc_usable_size
+    else if (@TypeOf(c._msize) != void)
+        c._msize
+    else {};
 
-    pub const supports_posix_memalign = @hasDecl(c, "posix_memalign");
+    pub const supports_posix_memalign = switch (builtin.os.tag) {
+        .dragonfly, .netbsd, .freebsd, .solaris, .openbsd, .linux, .macos, .ios, .tvos, .watchos, .visionos => true,
+        else => false,
+    };
 
     fn getHeader(ptr: [*]u8) *[*]u8 {
         return @as(*[*]u8, @ptrFromInt(@intFromPtr(ptr) - @sizeOf(usize)));
@@ -81,10 +74,10 @@ const CAllocator = struct {
         // Thin wrapper around regular malloc, overallocate to account for
         // alignment padding and store the original malloc()'ed pointer before
         // the aligned address.
-        var unaligned_ptr = @as([*]u8, @ptrCast(c.malloc(len + alignment - 1 + @sizeOf(usize)) orelse return null));
+        const unaligned_ptr = @as([*]u8, @ptrCast(c.malloc(len + alignment - 1 + @sizeOf(usize)) orelse return null));
         const unaligned_addr = @intFromPtr(unaligned_ptr);
         const aligned_addr = mem.alignForward(usize, unaligned_addr + @sizeOf(usize), alignment);
-        var aligned_ptr = unaligned_ptr + (aligned_addr - unaligned_addr);
+        const aligned_ptr = unaligned_ptr + (aligned_addr - unaligned_addr);
         getHeader(aligned_ptr).* = unaligned_ptr;
 
         return aligned_ptr;
@@ -207,7 +200,16 @@ fn rawCResize(
 ) bool {
     _ = log2_old_align;
     _ = ret_addr;
-    return new_len <= buf.len;
+
+    if (new_len <= buf.len)
+        return true;
+
+    if (CAllocator.supports_malloc_size) {
+        const full_len = CAllocator.malloc_size(buf.ptr);
+        if (new_len <= full_len) return true;
+    }
+
+    return false;
 }
 
 fn rawCFree(
@@ -223,7 +225,11 @@ fn rawCFree(
 
 /// This allocator makes a syscall directly for every allocation and free.
 /// Thread-safe and lock-free.
-pub const page_allocator = if (builtin.target.isWasm())
+pub const page_allocator = if (@hasDecl(root, "os") and
+    @hasDecl(root.os, "heap") and
+    @hasDecl(root.os.heap, "page_allocator"))
+    root.os.heap.page_allocator
+else if (builtin.target.isWasm())
     Allocator{
         .ptr = undefined,
         .vtable = &WasmPageAllocator.vtable,
@@ -233,8 +239,6 @@ else if (builtin.target.os.tag == .plan9)
         .ptr = undefined,
         .vtable = &SbrkAllocator(std.os.plan9.sbrk).vtable,
     }
-else if (builtin.target.os.tag == .freestanding)
-    root.os.heap.page_allocator
 else
     Allocator{
         .ptr = undefined,
@@ -262,7 +266,7 @@ pub const HeapAllocator = switch (builtin.os.tag) {
     .windows => struct {
         heap_handle: ?HeapHandle,
 
-        const HeapHandle = os.windows.HANDLE;
+        const HeapHandle = windows.HANDLE;
 
         pub fn init() HeapAllocator {
             return HeapAllocator{
@@ -283,7 +287,7 @@ pub const HeapAllocator = switch (builtin.os.tag) {
 
         pub fn deinit(self: *HeapAllocator) void {
             if (self.heap_handle) |heap_handle| {
-                os.windows.HeapDestroy(heap_handle);
+                windows.HeapDestroy(heap_handle);
             }
         }
 
@@ -302,15 +306,15 @@ pub const HeapAllocator = switch (builtin.os.tag) {
 
             const ptr_align = @as(usize, 1) << @as(Allocator.Log2Align, @intCast(log2_ptr_align));
             const amt = n + ptr_align - 1 + @sizeOf(usize);
-            const optional_heap_handle = @atomicLoad(?HeapHandle, &self.heap_handle, .SeqCst);
+            const optional_heap_handle = @atomicLoad(?HeapHandle, &self.heap_handle, .seq_cst);
             const heap_handle = optional_heap_handle orelse blk: {
-                const options = if (builtin.single_threaded) os.windows.HEAP_NO_SERIALIZE else 0;
-                const hh = os.windows.kernel32.HeapCreate(options, amt, 0) orelse return null;
-                const other_hh = @cmpxchgStrong(?HeapHandle, &self.heap_handle, null, hh, .SeqCst, .SeqCst) orelse break :blk hh;
-                os.windows.HeapDestroy(hh);
+                const options = if (builtin.single_threaded) windows.HEAP_NO_SERIALIZE else 0;
+                const hh = windows.kernel32.HeapCreate(options, amt, 0) orelse return null;
+                const other_hh = @cmpxchgStrong(?HeapHandle, &self.heap_handle, null, hh, .seq_cst, .seq_cst) orelse break :blk hh;
+                windows.HeapDestroy(hh);
                 break :blk other_hh.?; // can't be null because of the cmpxchg
             };
-            const ptr = os.windows.kernel32.HeapAlloc(heap_handle, 0, amt) orelse return null;
+            const ptr = windows.kernel32.HeapAlloc(heap_handle, 0, amt) orelse return null;
             const root_addr = @intFromPtr(ptr);
             const aligned_addr = mem.alignForward(usize, root_addr, ptr_align);
             const buf = @as([*]u8, @ptrFromInt(aligned_addr))[0..n];
@@ -332,9 +336,9 @@ pub const HeapAllocator = switch (builtin.os.tag) {
             const root_addr = getRecordPtr(buf).*;
             const align_offset = @intFromPtr(buf.ptr) - root_addr;
             const amt = align_offset + new_size + @sizeOf(usize);
-            const new_ptr = os.windows.kernel32.HeapReAlloc(
+            const new_ptr = windows.kernel32.HeapReAlloc(
                 self.heap_handle.?,
-                os.windows.HEAP_REALLOC_IN_PLACE_ONLY,
+                windows.HEAP_REALLOC_IN_PLACE_ONLY,
                 @as(*anyopaque, @ptrFromInt(root_addr)),
                 amt,
             ) orelse return false;
@@ -352,7 +356,7 @@ pub const HeapAllocator = switch (builtin.os.tag) {
             _ = log2_buf_align;
             _ = return_address;
             const self: *HeapAllocator = @ptrCast(@alignCast(ctx));
-            os.windows.HeapFree(self.heap_handle.?, 0, @as(*anyopaque, @ptrFromInt(getRecordPtr(buf).*)));
+            windows.HeapFree(self.heap_handle.?, 0, @as(*anyopaque, @ptrFromInt(getRecordPtr(buf).*)));
         }
     },
     else => @compileError("Unsupported OS"),
@@ -481,13 +485,13 @@ pub const FixedBufferAllocator = struct {
         const self: *FixedBufferAllocator = @ptrCast(@alignCast(ctx));
         _ = ra;
         const ptr_align = @as(usize, 1) << @as(Allocator.Log2Align, @intCast(log2_ptr_align));
-        var end_index = @atomicLoad(usize, &self.end_index, .SeqCst);
+        var end_index = @atomicLoad(usize, &self.end_index, .seq_cst);
         while (true) {
             const adjust_off = mem.alignPointerOffset(self.buffer.ptr + end_index, ptr_align) orelse return null;
             const adjusted_index = end_index + adjust_off;
             const new_end_index = adjusted_index + n;
             if (new_end_index > self.buffer.len) return null;
-            end_index = @cmpxchgWeak(usize, &self.end_index, end_index, new_end_index, .SeqCst, .SeqCst) orelse
+            end_index = @cmpxchgWeak(usize, &self.end_index, end_index, new_end_index, .seq_cst, .seq_cst) orelse
                 return self.buffer[adjusted_index..new_end_index].ptr;
         }
     }
@@ -496,8 +500,6 @@ pub const FixedBufferAllocator = struct {
         self.end_index = 0;
     }
 };
-
-pub const ThreadSafeFixedBufferAllocator = @compileError("ThreadSafeFixedBufferAllocator has been replaced with `threadSafeAllocator` on FixedBufferAllocator");
 
 /// Returns a `StackFallbackAllocator` allocating using either a
 /// `FixedBufferAllocator` on an array of size `size` and falling back to
@@ -521,10 +523,16 @@ pub fn StackFallbackAllocator(comptime size: usize) type {
         buffer: [size]u8,
         fallback_allocator: Allocator,
         fixed_buffer_allocator: FixedBufferAllocator,
+        get_called: if (std.debug.runtime_safety) bool else void =
+            if (std.debug.runtime_safety) false else {},
 
         /// This function both fetches a `Allocator` interface to this
         /// allocator *and* resets the internal buffer allocator.
         pub fn get(self: *Self) Allocator {
+            if (std.debug.runtime_safety) {
+                assert(!self.get_called); // `get` called multiple times; instead use `const allocator = stackFallback(N).get();`
+                self.get_called = true;
+            }
             self.fixed_buffer_allocator = FixedBufferAllocator.init(self.buffer[0..]);
             return .{
                 .ptr = self,
@@ -535,6 +543,12 @@ pub fn StackFallbackAllocator(comptime size: usize) type {
                 },
             };
         }
+
+        /// Unlike most std allocators `StackFallbackAllocator` modifies
+        /// its internal state before returning an implementation of
+        /// the`Allocator` interface and therefore also doesn't use
+        /// the usual `.allocator()` method.
+        pub const allocator = @compileError("use 'const allocator = stackFallback(N).get();' instead");
 
         fn alloc(
             ctx: *anyopaque,
@@ -661,12 +675,12 @@ test "FixedBufferAllocator.reset" {
     const X = 0xeeeeeeeeeeeeeeee;
     const Y = 0xffffffffffffffff;
 
-    var x = try allocator.create(u64);
+    const x = try allocator.create(u64);
     x.* = X;
     try testing.expectError(error.OutOfMemory, allocator.create(u64));
 
     fba.reset();
-    var y = try allocator.create(u64);
+    const y = try allocator.create(u64);
     y.* = Y;
 
     // we expect Y to have overwritten X.
@@ -675,13 +689,22 @@ test "FixedBufferAllocator.reset" {
 }
 
 test "StackFallbackAllocator" {
-    const fallback_allocator = page_allocator;
-    var stack_allocator = stackFallback(4096, fallback_allocator);
-
-    try testAllocator(stack_allocator.get());
-    try testAllocatorAligned(stack_allocator.get());
-    try testAllocatorLargeAlignment(stack_allocator.get());
-    try testAllocatorAlignedShrink(stack_allocator.get());
+    {
+        var stack_allocator = stackFallback(4096, std.testing.allocator);
+        try testAllocator(stack_allocator.get());
+    }
+    {
+        var stack_allocator = stackFallback(4096, std.testing.allocator);
+        try testAllocatorAligned(stack_allocator.get());
+    }
+    {
+        var stack_allocator = stackFallback(4096, std.testing.allocator);
+        try testAllocatorLargeAlignment(stack_allocator.get());
+    }
+    {
+        var stack_allocator = stackFallback(4096, std.testing.allocator);
+        try testAllocatorAlignedShrink(stack_allocator.get());
+    }
 }
 
 test "FixedBufferAllocator Reuse memory on realloc" {
@@ -691,9 +714,9 @@ test "FixedBufferAllocator Reuse memory on realloc" {
         var fixed_buffer_allocator = FixedBufferAllocator.init(small_fixed_buffer[0..]);
         const allocator = fixed_buffer_allocator.allocator();
 
-        var slice0 = try allocator.alloc(u8, 5);
+        const slice0 = try allocator.alloc(u8, 5);
         try testing.expect(slice0.len == 5);
-        var slice1 = try allocator.realloc(slice0, 10);
+        const slice1 = try allocator.realloc(slice0, 10);
         try testing.expect(slice1.ptr == slice0.ptr);
         try testing.expect(slice1.len == 10);
         try testing.expectError(error.OutOfMemory, allocator.realloc(slice1, 11));
@@ -706,8 +729,8 @@ test "FixedBufferAllocator Reuse memory on realloc" {
         var slice0 = try allocator.alloc(u8, 2);
         slice0[0] = 1;
         slice0[1] = 2;
-        var slice1 = try allocator.alloc(u8, 2);
-        var slice2 = try allocator.realloc(slice0, 4);
+        const slice1 = try allocator.alloc(u8, 2);
+        const slice2 = try allocator.realloc(slice0, 4);
         try testing.expect(slice0.ptr != slice2.ptr);
         try testing.expect(slice1.ptr != slice2.ptr);
         try testing.expect(slice2[0] == 1);
@@ -757,7 +780,7 @@ pub fn testAllocator(base_allocator: mem.Allocator) !void {
     allocator.free(slice);
 
     // Zero-length allocation
-    var empty = try allocator.alloc(u8, 0);
+    const empty = try allocator.alloc(u8, 0);
     allocator.free(empty);
     // Allocation with zero-sized types
     const zero_bit_ptr = try allocator.create(u0);

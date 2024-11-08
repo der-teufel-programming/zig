@@ -1,5 +1,5 @@
 const Foo = @Type(.{
-    .Struct = undefined,
+    .@"struct" = undefined,
 });
 comptime {
     _ = Foo;
@@ -9,4 +9,4 @@ comptime {
 // backend=stage2
 // target=native
 //
-// :1:13: error: use of undefined value here causes undefined behavior
+// :1:20: error: use of undefined value here causes undefined behavior

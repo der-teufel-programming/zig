@@ -7,7 +7,7 @@ const normalize = common.normalize;
 ///
 /// https://github.com/llvm/llvm-project/blob/02d85149a05cb1f6dc49f0ba7a2ceca53718ae17/compiler-rt/lib/builtins/fp_add_impl.inc
 pub inline fn addf3(comptime T: type, a: T, b: T) T {
-    const bits = @typeInfo(T).Float.bits;
+    const bits = @typeInfo(T).float.bits;
     const Z = std.meta.Int(.unsigned, bits);
 
     const typeWidth = bits;
@@ -114,7 +114,7 @@ pub inline fn addf3(comptime T: type, a: T, b: T) T {
         // If a == -b, return +zero.
         if (aSignificand == 0) return @bitCast(@as(Z, 0));
 
-        // If partial cancellation occured, we need to left-shift the result
+        // If partial cancellation occurred, we need to left-shift the result
         // and adjust the exponent:
         if (aSignificand < integerBit << 3) {
             const shift = @as(i32, @intCast(@clz(aSignificand))) - @as(i32, @intCast(@clz(integerBit << 3)));

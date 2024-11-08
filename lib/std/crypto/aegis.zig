@@ -106,8 +106,8 @@ const State128L = struct {
     fn mac(state: *State128L, comptime tag_bits: u9, adlen: usize, mlen: usize) [tag_bits / 8]u8 {
         const blocks = &state.blocks;
         var sizes: [16]u8 = undefined;
-        mem.writeIntLittle(u64, sizes[0..8], adlen * 8);
-        mem.writeIntLittle(u64, sizes[8..16], mlen * 8);
+        mem.writeInt(u64, sizes[0..8], @as(u64, adlen) * 8, .little);
+        mem.writeInt(u64, sizes[8..16], @as(u64, mlen) * 8, .little);
         const tmp = AesBlock.fromBytes(&sizes).xorBlocks(blocks[2]);
         var i: usize = 0;
         while (i < 7) : (i += 1) {
@@ -208,9 +208,9 @@ fn Aegis128LGeneric(comptime tag_bits: u9) type {
                 blocks[4] = blocks[4].xorBlocks(AesBlock.fromBytes(dst[16..32]));
             }
             var computed_tag = state.mac(tag_bits, ad.len, m.len);
-            const verify = crypto.utils.timingSafeEql([tag_length]u8, computed_tag, tag);
+            const verify = crypto.timing_safe.eql([tag_length]u8, computed_tag, tag);
             if (!verify) {
-                crypto.utils.secureZero(u8, &computed_tag);
+                crypto.secureZero(u8, &computed_tag);
                 @memset(m, undefined);
                 return error.AuthenticationFailed;
             }
@@ -284,8 +284,8 @@ const State256 = struct {
     fn mac(state: *State256, comptime tag_bits: u9, adlen: usize, mlen: usize) [tag_bits / 8]u8 {
         const blocks = &state.blocks;
         var sizes: [16]u8 = undefined;
-        mem.writeIntLittle(u64, sizes[0..8], adlen * 8);
-        mem.writeIntLittle(u64, sizes[8..16], mlen * 8);
+        mem.writeInt(u64, sizes[0..8], @as(u64, adlen) * 8, .little);
+        mem.writeInt(u64, sizes[8..16], @as(u64, mlen) * 8, .little);
         const tmp = AesBlock.fromBytes(&sizes).xorBlocks(blocks[3]);
         var i: usize = 0;
         while (i < 7) : (i += 1) {
@@ -390,9 +390,9 @@ fn Aegis256Generic(comptime tag_bits: u9) type {
                 blocks[0] = blocks[0].xorBlocks(AesBlock.fromBytes(&dst));
             }
             var computed_tag = state.mac(tag_bits, ad.len, m.len);
-            const verify = crypto.utils.timingSafeEql([tag_length]u8, computed_tag, tag);
+            const verify = crypto.timing_safe.eql([tag_length]u8, computed_tag, tag);
             if (!verify) {
-                crypto.utils.secureZero(u8, &computed_tag);
+                crypto.secureZero(u8, &computed_tag);
                 @memset(m, undefined);
                 return error.AuthenticationFailed;
             }

@@ -6,21 +6,21 @@ const expectEqual = std.testing.expectEqual;
 
 /// Creates a raw "1.0" mantissa for floating point type T. Used to dedupe f80 logic.
 inline fn mantissaOne(comptime T: type) comptime_int {
-    return if (@typeInfo(T).Float.bits == 80) 1 << floatFractionalBits(T) else 0;
+    return if (@typeInfo(T).float.bits == 80) 1 << floatFractionalBits(T) else 0;
 }
 
 /// Creates floating point type T from an unbiased exponent and raw mantissa.
 inline fn reconstructFloat(comptime T: type, comptime exponent: comptime_int, comptime mantissa: comptime_int) T {
-    const TBits = @Type(.{ .Int = .{ .signedness = .unsigned, .bits = @bitSizeOf(T) } });
+    const TBits = @Type(.{ .int = .{ .signedness = .unsigned, .bits = @bitSizeOf(T) } });
     const biased_exponent = @as(TBits, exponent + floatExponentMax(T));
     return @as(T, @bitCast((biased_exponent << floatMantissaBits(T)) | @as(TBits, mantissa)));
 }
 
 /// Returns the number of bits in the exponent of floating point type T.
 pub inline fn floatExponentBits(comptime T: type) comptime_int {
-    comptime assert(@typeInfo(T) == .Float);
+    comptime assert(@typeInfo(T) == .float);
 
-    return switch (@typeInfo(T).Float.bits) {
+    return switch (@typeInfo(T).float.bits) {
         16 => 5,
         32 => 8,
         64 => 11,
@@ -32,9 +32,9 @@ pub inline fn floatExponentBits(comptime T: type) comptime_int {
 
 /// Returns the number of bits in the mantissa of floating point type T.
 pub inline fn floatMantissaBits(comptime T: type) comptime_int {
-    comptime assert(@typeInfo(T) == .Float);
+    comptime assert(@typeInfo(T) == .float);
 
-    return switch (@typeInfo(T).Float.bits) {
+    return switch (@typeInfo(T).float.bits) {
         16 => 10,
         32 => 23,
         64 => 52,
@@ -46,12 +46,12 @@ pub inline fn floatMantissaBits(comptime T: type) comptime_int {
 
 /// Returns the number of fractional bits in the mantissa of floating point type T.
 pub inline fn floatFractionalBits(comptime T: type) comptime_int {
-    comptime assert(@typeInfo(T) == .Float);
+    comptime assert(@typeInfo(T) == .float);
 
     // standard IEEE floats have an implicit 0.m or 1.m integer part
     // f80 is special and has an explicitly stored bit in the MSB
     // this function corresponds to `MANT_DIG - 1' from C
-    return switch (@typeInfo(T).Float.bits) {
+    return switch (@typeInfo(T).float.bits) {
         16 => 10,
         32 => 23,
         64 => 52,
@@ -94,6 +94,19 @@ pub inline fn floatEps(comptime T: type) T {
     return reconstructFloat(T, -floatFractionalBits(T), mantissaOne(T));
 }
 
+/// Returns the local epsilon of floating point type T.
+pub inline fn floatEpsAt(comptime T: type, x: T) T {
+    switch (@typeInfo(T)) {
+        .float => |F| {
+            const U: type = @Type(.{ .int = .{ .signedness = .unsigned, .bits = F.bits } });
+            const u: U = @bitCast(x);
+            const y: T = @bitCast(u ^ 1);
+            return @abs(x - y);
+        },
+        else => @compileError("floatEpsAt only supports floats"),
+    }
+}
+
 /// Returns the value inf for floating point type T.
 pub inline fn inf(comptime T: type) T {
     return reconstructFloat(T, floatExponentMax(T) + 1, mantissaOne(T));
@@ -132,44 +145,41 @@ test "float bits" {
     }
 }
 
-test "math.inf" {
+test inf {
     const inf_u16: u16 = 0x7C00;
     const inf_u32: u32 = 0x7F800000;
     const inf_u64: u64 = 0x7FF0000000000000;
     const inf_u80: u80 = 0x7FFF8000000000000000;
     const inf_u128: u128 = 0x7FFF0000000000000000000000000000;
-    try expectEqual(inf_u16, @bitCast(inf(f16)));
-    try expectEqual(inf_u32, @bitCast(inf(f32)));
-    try expectEqual(inf_u64, @bitCast(inf(f64)));
-    try expectEqual(inf_u80, @bitCast(inf(f80)));
-    try expectEqual(inf_u128, @bitCast(inf(f128)));
+    try expectEqual(inf_u16, @as(u16, @bitCast(inf(f16))));
+    try expectEqual(inf_u32, @as(u32, @bitCast(inf(f32))));
+    try expectEqual(inf_u64, @as(u64, @bitCast(inf(f64))));
+    try expectEqual(inf_u80, @as(u80, @bitCast(inf(f80))));
+    try expectEqual(inf_u128, @as(u128, @bitCast(inf(f128))));
 }
 
-test "math.nan" {
+test nan {
     const qnan_u16: u16 = 0x7E00;
     const qnan_u32: u32 = 0x7FC00000;
     const qnan_u64: u64 = 0x7FF8000000000000;
     const qnan_u80: u80 = 0x7FFFC000000000000000;
     const qnan_u128: u128 = 0x7FFF8000000000000000000000000000;
-    try expectEqual(qnan_u16, @bitCast(nan(f16)));
-    try expectEqual(qnan_u32, @bitCast(nan(f32)));
-    try expectEqual(qnan_u64, @bitCast(nan(f64)));
-    try expectEqual(qnan_u80, @bitCast(nan(f80)));
-    try expectEqual(qnan_u128, @bitCast(nan(f128)));
+    try expectEqual(qnan_u16, @as(u16, @bitCast(nan(f16))));
+    try expectEqual(qnan_u32, @as(u32, @bitCast(nan(f32))));
+    try expectEqual(qnan_u64, @as(u64, @bitCast(nan(f64))));
+    try expectEqual(qnan_u80, @as(u80, @bitCast(nan(f80))));
+    try expectEqual(qnan_u128, @as(u128, @bitCast(nan(f128))));
 }
 
-test "math.snan" {
-    // TODO: https://github.com/ziglang/zig/issues/14366
-    if (builtin.zig_backend == .stage2_llvm and comptime builtin.cpu.arch.isArmOrThumb()) return error.SkipZigTest;
-
+test snan {
     const snan_u16: u16 = 0x7D00;
     const snan_u32: u32 = 0x7FA00000;
     const snan_u64: u64 = 0x7FF4000000000000;
     const snan_u80: u80 = 0x7FFFA000000000000000;
     const snan_u128: u128 = 0x7FFF4000000000000000000000000000;
-    try expectEqual(snan_u16, @bitCast(snan(f16)));
-    try expectEqual(snan_u32, @bitCast(snan(f32)));
-    try expectEqual(snan_u64, @bitCast(snan(f64)));
-    try expectEqual(snan_u80, @bitCast(snan(f80)));
-    try expectEqual(snan_u128, @bitCast(snan(f128)));
+    try expectEqual(snan_u16, @as(u16, @bitCast(snan(f16))));
+    try expectEqual(snan_u32, @as(u32, @bitCast(snan(f32))));
+    try expectEqual(snan_u64, @as(u64, @bitCast(snan(f64))));
+    try expectEqual(snan_u80, @as(u80, @bitCast(snan(f80))));
+    try expectEqual(snan_u128, @as(u128, @bitCast(snan(f128))));
 }

@@ -6,10 +6,6 @@ test "thread local variable" {
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_llvm) switch (builtin.cpu.arch) {
-        .x86_64, .x86 => {},
-        else => return error.SkipZigTest,
-    }; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     if (builtin.zig_backend == .stage2_x86_64 and builtin.os.tag == .macos) {
@@ -28,14 +24,10 @@ test "pointer to thread local array" {
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_llvm) switch (builtin.cpu.arch) {
-        .x86_64, .x86 => {},
-        else => return error.SkipZigTest,
-    }; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     const s = "Hello world";
-    std.mem.copy(u8, buffer[0..], s);
+    @memcpy(buffer[0..s.len], s);
     try std.testing.expectEqualSlices(u8, buffer[0..], s);
 }
 
@@ -45,10 +37,6 @@ test "reference a global threadlocal variable" {
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_llvm) switch (builtin.cpu.arch) {
-        .x86_64, .x86 => {},
-        else => return error.SkipZigTest,
-    }; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     _ = nrfx_uart_rx(&g_uart0);

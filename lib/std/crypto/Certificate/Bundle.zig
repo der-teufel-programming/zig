@@ -6,8 +6,8 @@
 //! certificate within `bytes`.
 
 /// The key is the contents slice of the subject.
-map: std.HashMapUnmanaged(der.Element.Slice, u32, MapContext, std.hash_map.default_max_load_percentage) = .{},
-bytes: std.ArrayListUnmanaged(u8) = .{},
+map: std.HashMapUnmanaged(der.Element.Slice, u32, MapContext, std.hash_map.default_max_load_percentage) = .empty,
+bytes: std.ArrayListUnmanaged(u8) = .empty,
 
 pub const VerifyError = Certificate.Parsed.VerifyError || error{
     CertificateIssuerNotFound,
@@ -125,14 +125,14 @@ fn rescanBSD(cb: *Bundle, gpa: Allocator, cert_file_path: []const u8) RescanBSDE
     cb.bytes.shrinkAndFree(gpa, cb.bytes.items.len);
 }
 
-const RescanWindowsError = Allocator.Error || ParseCertError || std.os.UnexpectedError || error{FileNotFound};
+const RescanWindowsError = Allocator.Error || ParseCertError || std.posix.UnexpectedError || error{FileNotFound};
 
 fn rescanWindows(cb: *Bundle, gpa: Allocator) RescanWindowsError!void {
     cb.bytes.clearRetainingCapacity();
     cb.map.clearRetainingCapacity();
 
     const w = std.os.windows;
-    const GetLastError = w.kernel32.GetLastError;
+    const GetLastError = w.GetLastError;
     const root = [4:0]u16{ 'R', 'O', 'O', 'T' };
     const store = w.crypt32.CertOpenSystemStoreW(null, &root) orelse switch (GetLastError()) {
         .FILE_NOT_FOUND => return error.FileNotFound,
@@ -160,7 +160,7 @@ pub fn addCertsFromDirPath(
     dir: fs.Dir,
     sub_dir_path: []const u8,
 ) AddCertsFromDirPathError!void {
-    var iterable_dir = try dir.openIterableDir(sub_dir_path, .{});
+    var iterable_dir = try dir.openDir(sub_dir_path, .{ .iterate = true });
     defer iterable_dir.close();
     return addCertsFromDir(cb, gpa, iterable_dir);
 }
@@ -171,14 +171,14 @@ pub fn addCertsFromDirPathAbsolute(
     abs_dir_path: []const u8,
 ) AddCertsFromDirPathError!void {
     assert(fs.path.isAbsolute(abs_dir_path));
-    var iterable_dir = try fs.openIterableDirAbsolute(abs_dir_path, .{});
+    var iterable_dir = try fs.openDirAbsolute(abs_dir_path, .{ .iterate = true });
     defer iterable_dir.close();
     return addCertsFromDir(cb, gpa, iterable_dir);
 }
 
 pub const AddCertsFromDirError = AddCertsFromFilePathError;
 
-pub fn addCertsFromDir(cb: *Bundle, gpa: Allocator, iterable_dir: fs.IterableDir) AddCertsFromDirError!void {
+pub fn addCertsFromDir(cb: *Bundle, gpa: Allocator, iterable_dir: fs.Dir) AddCertsFromDirError!void {
     var it = iterable_dir.iterate();
     while (try it.next()) |entry| {
         switch (entry.kind) {
@@ -186,7 +186,7 @@ pub fn addCertsFromDir(cb: *Bundle, gpa: Allocator, iterable_dir: fs.IterableDir
             else => continue,
         }
 
-        try addCertsFromFilePath(cb, gpa, iterable_dir.dir, entry.name);
+        try addCertsFromFilePath(cb, gpa, iterable_dir, entry.name);
     }
 }
 

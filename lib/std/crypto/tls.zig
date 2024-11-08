@@ -40,7 +40,8 @@ const assert = std.debug.assert;
 pub const Client = @import("tls/Client.zig");
 
 pub const record_header_len = 5;
-pub const max_ciphertext_len = (1 << 14) + 256;
+pub const max_ciphertext_inner_record_len = 1 << 14;
+pub const max_ciphertext_len = max_ciphertext_inner_record_len + 256;
 pub const max_ciphertext_record_len = max_ciphertext_len + record_header_len;
 pub const hello_retry_request_sequence = [32]u8{
     0xCF, 0x21, 0xAD, 0x74, 0xE5, 0x9A, 0x61, 0x11, 0xBE, 0x1D, 0x8C, 0x02, 0x1E, 0x65, 0xB8, 0x91,
@@ -278,8 +279,8 @@ pub const NamedGroup = enum(u16) {
     ffdhe8192 = 0x0104,
 
     // Hybrid post-quantum key agreements
-    x25519_kyber512d00 = 0xFE30,
-    x25519_kyber768d00 = 0x6399,
+    secp256r1_ml_kem256 = 0x11EB,
+    x25519_ml_kem768 = 0x11EC,
 
     _,
 };
@@ -290,7 +291,7 @@ pub const CipherSuite = enum(u16) {
     CHACHA20_POLY1305_SHA256 = 0x1303,
     AES_128_CCM_SHA256 = 0x1304,
     AES_128_CCM_8_SHA256 = 0x1305,
-    AEGIS_256_SHA384 = 0x1306,
+    AEGIS_256_SHA512 = 0x1306,
     AEGIS_128L_SHA256 = 0x1307,
     _,
 };
@@ -330,7 +331,7 @@ pub const HandshakeCipher = union(enum) {
     AES_128_GCM_SHA256: HandshakeCipherT(crypto.aead.aes_gcm.Aes128Gcm, crypto.hash.sha2.Sha256),
     AES_256_GCM_SHA384: HandshakeCipherT(crypto.aead.aes_gcm.Aes256Gcm, crypto.hash.sha2.Sha384),
     CHACHA20_POLY1305_SHA256: HandshakeCipherT(crypto.aead.chacha_poly.ChaCha20Poly1305, crypto.hash.sha2.Sha256),
-    AEGIS_256_SHA384: HandshakeCipherT(crypto.aead.aegis.Aegis256, crypto.hash.sha2.Sha384),
+    AEGIS_256_SHA512: HandshakeCipherT(crypto.aead.aegis.Aegis256, crypto.hash.sha2.Sha512),
     AEGIS_128L_SHA256: HandshakeCipherT(crypto.aead.aegis.Aegis128L, crypto.hash.sha2.Sha256),
 };
 
@@ -355,7 +356,7 @@ pub const ApplicationCipher = union(enum) {
     AES_128_GCM_SHA256: ApplicationCipherT(crypto.aead.aes_gcm.Aes128Gcm, crypto.hash.sha2.Sha256),
     AES_256_GCM_SHA384: ApplicationCipherT(crypto.aead.aes_gcm.Aes256Gcm, crypto.hash.sha2.Sha384),
     CHACHA20_POLY1305_SHA256: ApplicationCipherT(crypto.aead.chacha_poly.ChaCha20Poly1305, crypto.hash.sha2.Sha256),
-    AEGIS_256_SHA384: ApplicationCipherT(crypto.aead.aegis.Aegis256, crypto.hash.sha2.Sha384),
+    AEGIS_256_SHA512: ApplicationCipherT(crypto.aead.aegis.Aegis256, crypto.hash.sha2.Sha512),
     AEGIS_128L_SHA256: ApplicationCipherT(crypto.aead.aegis.Aegis128L, crypto.hash.sha2.Sha256),
 };
 
@@ -370,7 +371,7 @@ pub fn hkdfExpandLabel(
     const max_context_len = 255;
     const tls13 = "tls13 ";
     var buf: [2 + 1 + tls13.len + max_label_len + 1 + max_context_len]u8 = undefined;
-    mem.writeIntBig(u16, buf[0..2], len);
+    mem.writeInt(u16, buf[0..2], len, .big);
     buf[2] = @as(u8, @intCast(tls13.len + label.len));
     buf[3..][0..tls13.len].* = tls13.*;
     var i: usize = 3 + tls13.len;
@@ -490,7 +491,7 @@ pub const Decoder = struct {
     /// Use this function to increase `idx`.
     pub fn decode(d: *Decoder, comptime T: type) T {
         switch (@typeInfo(T)) {
-            .Int => |info| switch (info.bits) {
+            .int => |info| switch (info.bits) {
                 8 => {
                     skip(d, 1);
                     return d.buf[d.idx - 1];
@@ -510,7 +511,7 @@ pub const Decoder = struct {
                 },
                 else => @compileError("unsupported int type: " ++ @typeName(T)),
             },
-            .Enum => |info| {
+            .@"enum" => |info| {
                 const int = d.decode(info.tag_type);
                 if (info.is_exhaustive) @compileError("exhaustive enum cannot be used");
                 return @as(T, @enumFromInt(int));

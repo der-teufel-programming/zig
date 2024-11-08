@@ -149,6 +149,19 @@ test "integer after float has proper type" {
     try std.testing.expect(parsed.object.get("ints").?.array.items[0] == .integer);
 }
 
+test "ParseOptions.parse_numbers prevents parsing when false" {
+    var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_allocator.deinit();
+    const parsed = try parseFromSliceLeaky(Value, arena_allocator.allocator(),
+        \\{
+        \\  "float": 3.14,
+        \\  "int": 3
+        \\}
+    , .{ .parse_numbers = false });
+    try std.testing.expect(parsed.object.get("float").? == .number_string);
+    try std.testing.expect(parsed.object.get("int").? == .number_string);
+}
+
 test "escaped characters" {
     var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_allocator.deinit();
@@ -181,6 +194,34 @@ test "escaped characters" {
     try testing.expectEqualSlices(u8, obj.get("surrogatepair").?.string, "😂");
 }
 
+test "Value with duplicate fields" {
+    var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    const doc =
+        \\{
+        \\  "abc": 0,
+        \\  "abc": 1
+        \\}
+    ;
+
+    try testing.expectError(error.DuplicateField, parseFromSliceLeaky(std.json.Value, arena_allocator.allocator(), doc, .{
+        .duplicate_field_behavior = .@"error",
+    }));
+
+    const first = try parseFromSliceLeaky(std.json.Value, arena_allocator.allocator(), doc, .{
+        .duplicate_field_behavior = .use_first,
+    });
+    try testing.expectEqual(@as(usize, 1), first.object.count());
+    try testing.expectEqual(@as(i64, 0), first.object.get("abc").?.integer);
+
+    const last = try parseFromSliceLeaky(std.json.Value, arena_allocator.allocator(), doc, .{
+        .duplicate_field_behavior = .use_last,
+    });
+    try testing.expectEqual(@as(usize, 1), last.object.count());
+    try testing.expectEqual(@as(i64, 1), last.object.get("abc").?.integer);
+}
+
 test "Value.jsonStringify" {
     var vals = [_]Value{
         .{ .integer = 1 },
@@ -190,15 +231,15 @@ test "Value.jsonStringify" {
     var obj = ObjectMap.init(testing.allocator);
     defer obj.deinit();
     try obj.putNoClobber("a", .{ .string = "b" });
-    var array = [_]Value{
-        Value.null,
-        Value{ .bool = true },
-        Value{ .integer = 42 },
-        Value{ .number_string = "43" },
-        Value{ .float = 42 },
-        Value{ .string = "weeee" },
-        Value{ .array = Array.fromOwnedSlice(undefined, &vals) },
-        Value{ .object = obj },
+    const array = [_]Value{
+        .null,
+        .{ .bool = true },
+        .{ .integer = 42 },
+        .{ .number_string = "43" },
+        .{ .float = 42 },
+        .{ .string = "weeee" },
+        .{ .array = Array.fromOwnedSlice(undefined, &vals) },
+        .{ .object = obj },
     };
     var buffer: [0x1000]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buffer);
@@ -213,7 +254,7 @@ test "Value.jsonStringify" {
         \\ true,
         \\ 42,
         \\ 43,
-        \\ 4.2e+01,
+        \\ 4.2e1,
         \\ "weeee",
         \\ [
         \\  1,
@@ -337,6 +378,17 @@ test "many object keys" {
     try testing.expectEqualStrings("v3", parsed.value.object.get("k3").?.string);
     try testing.expectEqualStrings("v4", parsed.value.object.get("k4").?.string);
     try testing.expectEqualStrings("v5", parsed.value.object.get("k5").?.string);
+}
+
+test "negative zero" {
+    const doc = "-0";
+    var fbs = std.io.fixedBufferStream(doc);
+    var reader = smallBufferJsonReader(testing.allocator, fbs.reader());
+    defer reader.deinit();
+    var parsed = try parseFromTokenSource(Value, testing.allocator, &reader, .{});
+    defer parsed.deinit();
+
+    try testing.expect(std.math.isNegativeZero(parsed.value.float));
 }
 
 fn smallBufferJsonReader(allocator: Allocator, io_reader: anytype) JsonReader(16, @TypeOf(io_reader)) {

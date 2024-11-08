@@ -1,5 +1,4 @@
 const std = @import("../std.zig");
-const utils = std.crypto.utils;
 const mem = std.mem;
 const mulWide = std.math.mulWide;
 
@@ -13,7 +12,7 @@ pub const Poly1305 = struct {
     // accumulated hash
     h: [3]u64 = [_]u64{ 0, 0, 0 },
     // random number added at the end (from the secret key)
-    pad: [2]u64,
+    end_pad: [2]u64,
     // how many bytes are waiting to be processed in a partial block
     leftover: usize = 0,
     // partial block buffer
@@ -22,12 +21,12 @@ pub const Poly1305 = struct {
     pub fn init(key: *const [key_length]u8) Poly1305 {
         return Poly1305{
             .r = [_]u64{
-                mem.readIntLittle(u64, key[0..8]) & 0x0ffffffc0fffffff,
-                mem.readIntLittle(u64, key[8..16]) & 0x0ffffffc0ffffffc,
+                mem.readInt(u64, key[0..8], .little) & 0x0ffffffc0fffffff,
+                mem.readInt(u64, key[8..16], .little) & 0x0ffffffc0ffffffc,
             },
-            .pad = [_]u64{
-                mem.readIntLittle(u64, key[16..24]),
-                mem.readIntLittle(u64, key[24..32]),
+            .end_pad = [_]u64{
+                mem.readInt(u64, key[16..24], .little),
+                mem.readInt(u64, key[24..32], .little),
             },
         };
     }
@@ -56,8 +55,8 @@ pub const Poly1305 = struct {
         var i: usize = 0;
 
         while (i + block_length <= m.len) : (i += block_length) {
-            const in0 = mem.readIntLittle(u64, m[i..][0..8]);
-            const in1 = mem.readIntLittle(u64, m[i + 8 ..][0..8]);
+            const in0 = mem.readInt(u64, m[i..][0..8], .little);
+            const in1 = mem.readInt(u64, m[i + 8 ..][0..8], .little);
 
             // Add the input message to H
             var v = @addWithOverflow(h0, in0);
@@ -90,8 +89,8 @@ pub const Poly1305 = struct {
             h2 = t2 & 3;
 
             // Add c*(4+1)
-            var cclo = t2 & ~@as(u64, 3);
-            var cchi = t3;
+            const cclo = t2 & ~@as(u64, 3);
+            const cchi = t3;
             v = @addWithOverflow(h0, cclo);
             h0 = v[0];
             v = add(h1, cchi, v[1]);
@@ -148,7 +147,7 @@ pub const Poly1305 = struct {
             return;
         }
         @memset(st.buf[st.leftover..], 0);
-        st.blocks(&st.buf);
+        st.blocks(&st.buf, false);
         st.leftover = 0;
     }
 
@@ -163,7 +162,7 @@ pub const Poly1305 = struct {
 
         var h0 = st.h[0];
         var h1 = st.h[1];
-        var h2 = st.h[2];
+        const h2 = st.h[2];
 
         // H - (2^130 - 5)
         var v = @subWithOverflow(h0, 0xfffffffffffffffb);
@@ -178,14 +177,14 @@ pub const Poly1305 = struct {
         h1 ^= mask & (h1 ^ h_p1);
 
         // Add the first half of the key, we intentionally don't use @addWithOverflow() here.
-        st.h[0] = h0 +% st.pad[0];
-        const c = ((h0 & st.pad[0]) | ((h0 | st.pad[0]) & ~st.h[0])) >> 63;
-        st.h[1] = h1 +% st.pad[1] +% c;
+        st.h[0] = h0 +% st.end_pad[0];
+        const c = ((h0 & st.end_pad[0]) | ((h0 | st.end_pad[0]) & ~st.h[0])) >> 63;
+        st.h[1] = h1 +% st.end_pad[1] +% c;
 
-        mem.writeIntLittle(u64, out[0..8], st.h[0]);
-        mem.writeIntLittle(u64, out[8..16], st.h[1]);
+        mem.writeInt(u64, out[0..8], st.h[0], .little);
+        mem.writeInt(u64, out[8..16], st.h[1], .little);
 
-        utils.secureZero(u8, @as([*]u8, @ptrCast(st))[0..@sizeOf(Poly1305)]);
+        std.crypto.secureZero(u8, @as([*]u8, @ptrCast(st))[0..@sizeOf(Poly1305)]);
     }
 
     pub fn create(out: *[mac_length]u8, msg: []const u8, key: *const [key_length]u8) void {
@@ -195,7 +194,7 @@ pub const Poly1305 = struct {
     }
 };
 
-test "poly1305 rfc7439 vector1" {
+test "rfc7439 vector1" {
     const expected_mac = "\xa8\x06\x1d\xc1\x30\x51\x36\xc6\xc2\x2b\x8b\xaf\x0c\x01\x27\xa9";
 
     const msg = "Cryptographic Forum Research Group";
@@ -208,7 +207,7 @@ test "poly1305 rfc7439 vector1" {
     try std.testing.expectEqualSlices(u8, expected_mac, &mac);
 }
 
-test "poly1305 requiring a final reduction" {
+test "requiring a final reduction" {
     const expected_mac = [_]u8{ 25, 13, 249, 42, 164, 57, 99, 60, 149, 181, 74, 74, 13, 63, 121, 6 };
     const msg = [_]u8{ 253, 193, 249, 146, 70, 6, 214, 226, 131, 213, 241, 116, 20, 24, 210, 224, 65, 151, 255, 104, 133 };
     const key = [_]u8{ 190, 63, 95, 57, 155, 103, 77, 170, 7, 98, 106, 44, 117, 186, 90, 185, 109, 118, 184, 24, 69, 41, 166, 243, 119, 132, 151, 61, 52, 43, 64, 250 };

@@ -21,7 +21,7 @@ pub const ExecHdr = extern struct {
         var buf: [40]u8 = undefined;
         var i: u8 = 0;
         inline for (std.meta.fields(@This())) |f| {
-            std.mem.writeIntSliceBig(u32, buf[i..][0..4], @field(self, f.name));
+            std.mem.writeInt(u32, buf[i..][0..4], @field(self, f.name), .big);
             i += 4;
         }
         return buf;
@@ -110,7 +110,7 @@ pub const R_MAGIC = _MAGIC(HDR_MAGIC, 28); // arm64
 pub fn magicFromArch(arch: std.Target.Cpu.Arch) !u32 {
     return switch (arch) {
         .x86 => I_MAGIC,
-        .sparc => K_MAGIC, // TODO should sparc64 and sparcel go here?
+        .sparc => K_MAGIC, // TODO should sparc64 go here?
         .mips => V_MAGIC,
         .arm => E_MAGIC,
         .aarch64 => R_MAGIC,

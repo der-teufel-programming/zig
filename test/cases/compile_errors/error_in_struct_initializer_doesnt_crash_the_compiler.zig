@@ -4,13 +4,11 @@ pub export fn entry() void {
         e: u8,
     };
     var a = .{@sizeOf(bitfield)};
-    _ = a;
+    _ = &a;
 }
 
 // error
-// backend=stage2
-// target=native
 //
-// :4:9: error: duplicate struct field: 'e'
-// :3:9: note: other field here
+// :3:9: error: duplicate struct member name 'e'
+// :4:9: note: duplicate name here
 // :2:22: note: struct declared here

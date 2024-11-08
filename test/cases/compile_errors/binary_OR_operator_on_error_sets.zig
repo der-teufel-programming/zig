@@ -1,7 +1,7 @@
 pub const A = error.A;
 pub const AB = A | error.B;
 export fn entry() void {
-    var x: AB = undefined;
+    const x: AB = undefined;
     _ = x;
 }
 
@@ -9,4 +9,4 @@ export fn entry() void {
 // backend=stage2
 // target=native
 //
-// :2:18: error: invalid operands to binary bitwise expression: 'ErrorSet' and 'ErrorSet'
+// :2:18: error: invalid operands to binary bitwise expression: 'error_set' and 'error_set'

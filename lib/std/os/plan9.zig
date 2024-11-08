@@ -11,13 +11,96 @@ pub const syscall_bits = switch (builtin.cpu.arch) {
     .x86_64 => @import("plan9/x86_64.zig"),
     else => @compileError("more plan9 syscall implementations (needs more inline asm in stage2"),
 };
-pub const E = @import("plan9/errno.zig").E;
-/// Get the errno from a syscall return value, or 0 for no error.
-pub fn getErrno(r: usize) E {
-    const signed_r = @as(isize, @bitCast(r));
-    const int = if (signed_r > -4096 and signed_r < 0) -signed_r else 0;
-    return @as(E, @enumFromInt(int));
-}
+/// Ported from /sys/include/ape/errno.h
+pub const E = enum(u16) {
+    SUCCESS = 0,
+    DOM = 1000,
+    RANGE = 1001,
+    PLAN9 = 1002,
+
+    @"2BIG" = 1,
+    ACCES = 2,
+    AGAIN = 3,
+    // WOULDBLOCK = 3, // TODO errno.h has 2 names for 3
+    BADF = 4,
+    BUSY = 5,
+    CHILD = 6,
+    DEADLK = 7,
+    EXIST = 8,
+    FAULT = 9,
+    FBIG = 10,
+    INTR = 11,
+    INVAL = 12,
+    IO = 13,
+    ISDIR = 14,
+    MFILE = 15,
+    MLINK = 16,
+    NAMETOOLONG = 17,
+    NFILE = 18,
+    NODEV = 19,
+    NOENT = 20,
+    NOEXEC = 21,
+    NOLCK = 22,
+    NOMEM = 23,
+    NOSPC = 24,
+    NOSYS = 25,
+    NOTDIR = 26,
+    NOTEMPTY = 27,
+    NOTTY = 28,
+    NXIO = 29,
+    PERM = 30,
+    PIPE = 31,
+    ROFS = 32,
+    SPIPE = 33,
+    SRCH = 34,
+    XDEV = 35,
+
+    // bsd networking software
+    NOTSOCK = 36,
+    PROTONOSUPPORT = 37,
+    // PROTOTYPE = 37, // TODO errno.h has two names for 37
+    CONNREFUSED = 38,
+    AFNOSUPPORT = 39,
+    NOBUFS = 40,
+    OPNOTSUPP = 41,
+    ADDRINUSE = 42,
+    DESTADDRREQ = 43,
+    MSGSIZE = 44,
+    NOPROTOOPT = 45,
+    SOCKTNOSUPPORT = 46,
+    PFNOSUPPORT = 47,
+    ADDRNOTAVAIL = 48,
+    NETDOWN = 49,
+    NETUNREACH = 50,
+    NETRESET = 51,
+    CONNABORTED = 52,
+    ISCONN = 53,
+    NOTCONN = 54,
+    SHUTDOWN = 55,
+    TOOMANYREFS = 56,
+    TIMEDOUT = 57,
+    HOSTDOWN = 58,
+    HOSTUNREACH = 59,
+    GREG = 60,
+
+    // These added in 1003.1b-1993
+    CANCELED = 61,
+    INPROGRESS = 62,
+
+    // We just add these to be compatible with std.os, which uses them,
+    // They should never get used.
+    DQUOT,
+    CONNRESET,
+    OVERFLOW,
+    LOOP,
+    TXTBSY,
+
+    pub fn init(r: usize) E {
+        const signed_r: isize = @bitCast(r);
+        const int = if (signed_r > -4096 and signed_r < 0) -signed_r else 0;
+        return @enumFromInt(int);
+    }
+};
 // The max bytes that can be in the errstr buff
 pub const ERRMAX = 128;
 var errstr_buf: [ERRMAX]u8 = undefined;
@@ -101,10 +184,10 @@ pub const SIG = struct {
 pub const sigset_t = c_long;
 pub const empty_sigset = 0;
 pub const siginfo_t = c_long;
-// TODO plan9 doesn't have sigaction_fn. Sigaction is not a union, but we incude it here to be compatible.
+// TODO plan9 doesn't have sigaction_fn. Sigaction is not a union, but we include it here to be compatible.
 pub const Sigaction = extern struct {
-    pub const handler_fn = *const fn (c_int) callconv(.C) void;
-    pub const sigaction_fn = *const fn (c_int, *const siginfo_t, ?*const anyopaque) callconv(.C) void;
+    pub const handler_fn = *const fn (i32) callconv(.C) void;
+    pub const sigaction_fn = *const fn (i32, *const siginfo_t, ?*anyopaque) callconv(.C) void;
 
     handler: extern union {
         handler: ?handler_fn,
@@ -202,16 +285,16 @@ pub fn openat(dirfd: i32, path: [*:0]const u8, flags: u32, _: mode_t) usize {
     if (dirfd == AT.FDCWD) { // openat(AT_FDCWD, ...) == open(...)
         return open(path, flags);
     }
-    var dir_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    var total_path_buf: [std.fs.MAX_PATH_BYTES + 1]u8 = undefined;
-    const rc = fd2path(dirfd, &dir_path_buf, std.fs.MAX_PATH_BYTES);
+    var dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var total_path_buf: [std.fs.max_path_bytes + 1]u8 = undefined;
+    const rc = fd2path(dirfd, &dir_path_buf, std.fs.max_path_bytes);
     if (rc != 0) return rc;
     var fba = std.heap.FixedBufferAllocator.init(&total_path_buf);
     var alloc = fba.allocator();
     const dir_path = std.mem.span(@as([*:0]u8, @ptrCast(&dir_path_buf)));
-    const total_path = std.fs.path.join(alloc, &.{ dir_path, std.mem.span(path) }) catch unreachable; // the allocation shouldn't fail because it should not exceed MAX_PATH_BYTES
+    const total_path = std.fs.path.join(alloc, &.{ dir_path, std.mem.span(path) }) catch unreachable; // the allocation shouldn't fail because it should not exceed max_path_bytes
     fba.reset();
-    const total_path_z = alloc.dupeZ(u8, total_path) catch unreachable; // should not exceed MAX_PATH_BYTES + 1
+    const total_path_z = alloc.dupeZ(u8, total_path) catch unreachable; // should not exceed max_path_bytes + 1
     return open(total_path_z.ptr, flags);
 }
 
@@ -242,17 +325,23 @@ pub fn close(fd: i32) usize {
     return syscall_bits.syscall1(.CLOSE, @bitCast(@as(isize, fd)));
 }
 pub const mode_t = i32;
-pub const O = struct {
-    pub const READ = 0; // open for read
-    pub const RDONLY = 0;
-    pub const WRITE = 1; // write
-    pub const WRONLY = 1;
-    pub const RDWR = 2; // read and write
-    pub const EXEC = 3; // execute, == read but check execute permission
-    pub const TRUNC = 16; // or'ed in (except for exec), truncate file first
-    pub const CEXEC = 32; // or'ed in (per file descriptor), close on exec
-    pub const RCLOSE = 64; // or'ed in, remove on close
-    pub const EXCL = 0x1000; // or'ed in, exclusive create
+
+pub const AccessMode = enum(u2) {
+    RDONLY,
+    WRONLY,
+    RDWR,
+    EXEC,
+};
+
+pub const O = packed struct(u32) {
+    access: AccessMode,
+    _2: u2 = 0,
+    TRUNC: bool = false,
+    CEXEC: bool = false,
+    RCLOSE: bool = false,
+    _7: u5 = 0,
+    EXCL: bool = false,
+    _: u19 = 0,
 };
 
 pub const ExecData = struct {
@@ -278,7 +367,7 @@ pub fn sbrk(n: usize) usize {
         bloc = @intFromPtr(&ExecData.end);
         bloc_max = @intFromPtr(&ExecData.end);
     }
-    var bl = std.mem.alignForward(usize, bloc, std.mem.page_size);
+    const bl = std.mem.alignForward(usize, bloc, std.mem.page_size);
     const n_aligned = std.mem.alignForward(usize, n, std.mem.page_size);
     if (bl + n_aligned > bloc_max) {
         // we need to allocate

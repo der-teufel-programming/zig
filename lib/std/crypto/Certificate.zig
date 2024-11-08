@@ -17,8 +17,9 @@ pub const Algorithm = enum {
     ecdsa_with_SHA512,
     md2WithRSAEncryption,
     md5WithRSAEncryption,
+    curveEd25519,
 
-    pub const map = std.ComptimeStringMap(Algorithm, .{
+    pub const map = std.StaticStringMap(Algorithm).initComptime(.{
         .{ &[_]u8{ 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x05 }, .sha1WithRSAEncryption },
         .{ &[_]u8{ 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B }, .sha256WithRSAEncryption },
         .{ &[_]u8{ 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0C }, .sha384WithRSAEncryption },
@@ -30,6 +31,7 @@ pub const Algorithm = enum {
         .{ &[_]u8{ 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x04 }, .ecdsa_with_SHA512 },
         .{ &[_]u8{ 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x02 }, .md2WithRSAEncryption },
         .{ &[_]u8{ 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x04 }, .md5WithRSAEncryption },
+        .{ &[_]u8{ 0x2B, 0x65, 0x70 }, .curveEd25519 },
     });
 
     pub fn Hash(comptime algorithm: Algorithm) type {
@@ -38,7 +40,7 @@ pub const Algorithm = enum {
             .ecdsa_with_SHA224, .sha224WithRSAEncryption => crypto.hash.sha2.Sha224,
             .ecdsa_with_SHA256, .sha256WithRSAEncryption => crypto.hash.sha2.Sha256,
             .ecdsa_with_SHA384, .sha384WithRSAEncryption => crypto.hash.sha2.Sha384,
-            .ecdsa_with_SHA512, .sha512WithRSAEncryption => crypto.hash.sha2.Sha512,
+            .ecdsa_with_SHA512, .sha512WithRSAEncryption, .curveEd25519 => crypto.hash.sha2.Sha512,
             .md2WithRSAEncryption => @compileError("unimplemented"),
             .md5WithRSAEncryption => crypto.hash.Md5,
         };
@@ -48,10 +50,12 @@ pub const Algorithm = enum {
 pub const AlgorithmCategory = enum {
     rsaEncryption,
     X9_62_id_ecPublicKey,
+    curveEd25519,
 
-    pub const map = std.ComptimeStringMap(AlgorithmCategory, .{
+    pub const map = std.StaticStringMap(AlgorithmCategory).initComptime(.{
         .{ &[_]u8{ 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01 }, .rsaEncryption },
         .{ &[_]u8{ 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01 }, .X9_62_id_ecPublicKey },
+        .{ &[_]u8{ 0x2B, 0x65, 0x70 }, .curveEd25519 },
     });
 };
 
@@ -69,7 +73,7 @@ pub const Attribute = enum {
     pkcs9_emailAddress,
     domainComponent,
 
-    pub const map = std.ComptimeStringMap(Attribute, .{
+    pub const map = std.StaticStringMap(Attribute).initComptime(.{
         .{ &[_]u8{ 0x55, 0x04, 0x03 }, .commonName },
         .{ &[_]u8{ 0x55, 0x04, 0x05 }, .serialNumber },
         .{ &[_]u8{ 0x55, 0x04, 0x06 }, .countryName },
@@ -90,7 +94,7 @@ pub const NamedCurve = enum {
     secp521r1,
     X9_62_prime256v1,
 
-    pub const map = std.ComptimeStringMap(NamedCurve, .{
+    pub const map = std.StaticStringMap(NamedCurve).initComptime(.{
         .{ &[_]u8{ 0x2B, 0x81, 0x04, 0x00, 0x22 }, .secp384r1 },
         .{ &[_]u8{ 0x2B, 0x81, 0x04, 0x00, 0x23 }, .secp521r1 },
         .{ &[_]u8{ 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07 }, .X9_62_prime256v1 },
@@ -126,7 +130,7 @@ pub const ExtensionId = enum {
     netscape_cert_type,
     netscape_comment,
 
-    pub const map = std.ComptimeStringMap(ExtensionId, .{
+    pub const map = std.StaticStringMap(ExtensionId).initComptime(.{
         .{ &[_]u8{ 0x55, 0x04, 0x03 }, .commonName },
         .{ &[_]u8{ 0x55, 0x1D, 0x01 }, .authority_key_identifier },
         .{ &[_]u8{ 0x55, 0x1D, 0x07 }, .subject_alt_name },
@@ -182,6 +186,7 @@ pub const Parsed = struct {
     pub const PubKeyAlgo = union(AlgorithmCategory) {
         rsaEncryption: void,
         X9_62_id_ecPublicKey: NamedCurve,
+        curveEd25519: void,
     };
 
     pub const Validity = struct {
@@ -287,6 +292,13 @@ pub const Parsed = struct {
             .md2WithRSAEncryption, .md5WithRSAEncryption => {
                 return error.CertificateSignatureAlgorithmUnsupported;
             },
+
+            .curveEd25519 => return verifyEd25519(
+                parsed_subject.message(),
+                parsed_subject.signature(),
+                parsed_issuer.pub_key_algo,
+                parsed_issuer.pubKey(),
+            ),
         }
     }
 
@@ -333,7 +345,7 @@ pub const Parsed = struct {
     // component or component fragment. E.g., *.a.com matches foo.a.com but
     // not bar.foo.a.com. f*.com matches foo.com but not bar.com.
     fn checkHostName(host_name: []const u8, dns_name: []const u8) bool {
-        if (mem.eql(u8, dns_name, host_name)) {
+        if (std.ascii.eqlIgnoreCase(dns_name, host_name)) {
             return true; // exact match
         }
 
@@ -350,7 +362,7 @@ pub const Parsed = struct {
 
             // If not a wildcard and they dont
             // match then there is no match.
-            if (mem.eql(u8, dns.?, "*") == false and mem.eql(u8, dns.?, host.?) == false) {
+            if (mem.eql(u8, dns.?, "*") == false and std.ascii.eqlIgnoreCase(dns.?, host.?) == false) {
                 return false;
             }
         };
@@ -369,6 +381,9 @@ test "Parsed.checkHostName" {
     try expectEqual(false, Parsed.checkHostName("foo.bar.ziglang.org", "*.ziglang.org"));
     try expectEqual(false, Parsed.checkHostName("ziglang.org", "zig*.org"));
     try expectEqual(false, Parsed.checkHostName("lang.org", "zig*.org"));
+    // host name check should be case insensitive
+    try expectEqual(true, Parsed.checkHostName("ziglang.org", "Ziglang.org"));
+    try expectEqual(true, Parsed.checkHostName("bar.ziglang.org", "*.Ziglang.ORG"));
 }
 
 pub const ParseError = der.Element.ParseElementError || ParseVersionError || ParseTimeError || ParseEnumError || ParseBitStringError;
@@ -414,6 +429,9 @@ pub fn parse(cert: Certificate) ParseError!Parsed {
             const params_elem = try der.Element.parse(cert_bytes, pub_key_algo_elem.slice.end);
             const named_curve = try parseNamedCurve(cert_bytes, params_elem);
             pub_key_algo = .{ .X9_62_id_ecPublicKey = named_curve };
+        },
+        .curveEd25519 => {
+            pub_key_algo = .{ .curveEd25519 = {} };
         },
     }
     const pub_key_elem = try der.Element.parse(cert_bytes, pub_key_signature_algorithm.slice.end);
@@ -614,10 +632,12 @@ const Date = struct {
 };
 
 pub fn parseTimeDigits(text: *const [2]u8, min: u8, max: u8) !u8 {
-    const nn: @Vector(2, u16) = .{ text[0], text[1] };
-    const zero: @Vector(2, u16) = .{ '0', '0' };
-    const mm: @Vector(2, u16) = .{ 10, 1 };
-    const result = @reduce(.Add, (nn -% zero) *% mm);
+    const result = if (use_vectors) result: {
+        const nn: @Vector(2, u16) = .{ text[0], text[1] };
+        const zero: @Vector(2, u16) = .{ '0', '0' };
+        const mm: @Vector(2, u16) = .{ 10, 1 };
+        break :result @reduce(.Add, (nn -% zero) *% mm);
+    } else std.fmt.parseInt(u8, text, 10) catch return error.CertificateTimeInvalid;
     if (result < min) return error.CertificateTimeInvalid;
     if (result > max) return error.CertificateTimeInvalid;
     return @truncate(result);
@@ -636,10 +656,12 @@ test parseTimeDigits {
 }
 
 pub fn parseYear4(text: *const [4]u8) !u16 {
-    const nnnn: @Vector(4, u32) = .{ text[0], text[1], text[2], text[3] };
-    const zero: @Vector(4, u32) = .{ '0', '0', '0', '0' };
-    const mmmm: @Vector(4, u32) = .{ 1000, 100, 10, 1 };
-    const result = @reduce(.Add, (nnnn -% zero) *% mmmm);
+    const result = if (use_vectors) result: {
+        const nnnn: @Vector(4, u32) = .{ text[0], text[1], text[2], text[3] };
+        const zero: @Vector(4, u32) = .{ '0', '0', '0', '0' };
+        const mmmm: @Vector(4, u32) = .{ 1000, 100, 10, 1 };
+        break :result @reduce(.Add, (nnnn -% zero) *% mmmm);
+    } else std.fmt.parseInt(u16, text, 10) catch return error.CertificateTimeInvalid;
     if (result > 9999) return error.CertificateTimeInvalid;
     return @truncate(result);
 }
@@ -753,7 +775,7 @@ fn verifyRsa(
     Hash.hash(message, &msg_hashed, .{});
 
     switch (modulus.len) {
-        inline 128, 256, 512 => |modulus_len| {
+        inline 128, 256, 384, 512 => |modulus_len| {
             const ps_len = modulus_len - (hash_der.len + msg_hashed.len) - 3;
             const em: [modulus_len]u8 =
                 [2]u8{ 0, 1 } ++
@@ -812,6 +834,29 @@ fn verify_ecdsa(
             };
         },
     }
+}
+
+fn verifyEd25519(
+    message: []const u8,
+    encoded_sig: []const u8,
+    pub_key_algo: Parsed.PubKeyAlgo,
+    encoded_pub_key: []const u8,
+) !void {
+    if (pub_key_algo != .curveEd25519) return error.CertificateSignatureAlgorithmMismatch;
+    const Ed25519 = crypto.sign.Ed25519;
+    if (encoded_sig.len != Ed25519.Signature.encoded_length) return error.CertificateSignatureInvalid;
+    const sig = Ed25519.Signature.fromBytes(encoded_sig[0..Ed25519.Signature.encoded_length].*);
+    if (encoded_pub_key.len != Ed25519.PublicKey.encoded_length) return error.CertificateSignatureInvalid;
+    const pub_key = Ed25519.PublicKey.fromBytes(encoded_pub_key[0..Ed25519.PublicKey.encoded_length].*) catch |err| switch (err) {
+        error.NonCanonical => return error.CertificateSignatureInvalid,
+    };
+    sig.verify(message, pub_key) catch |err| switch (err) {
+        error.IdentityElement => return error.CertificateSignatureInvalid,
+        error.NonCanonical => return error.CertificateSignatureInvalid,
+        error.SignatureVerificationFailed => return error.CertificateSignatureInvalid,
+        error.InvalidEncoding => return error.CertificateSignatureInvalid,
+        error.WeakPublicKey => return error.CertificateSignatureInvalid,
+    };
 }
 
 const std = @import("../std.zig");
@@ -932,7 +977,7 @@ pub const rsa = struct {
             //      the hash function (2^61 - 1 octets for SHA-1), output
             //      "inconsistent" and stop.
             // All the cryptographic hash functions in the standard library have a limit of >= 2^61 - 1.
-            // Even then, this check is only there for paranoia. In the context of TLS certifcates, emBit cannot exceed 4096.
+            // Even then, this check is only there for paranoia. In the context of TLS certificates, emBit cannot exceed 4096.
             if (emBit >= 1 << 61) return error.InvalidSignature;
 
             // emLen = \ceil(emBits/8)
@@ -978,7 +1023,7 @@ pub const rsa = struct {
             if (mgf_len > mgf_out_buf.len) { // Modulus > 4096 bits
                 return error.InvalidSignature;
             }
-            var mgf_out = mgf_out_buf[0 .. ((mgf_len - 1) / Hash.digest_length + 1) * Hash.digest_length];
+            const mgf_out = mgf_out_buf[0 .. ((mgf_len - 1) / Hash.digest_length + 1) * Hash.digest_length];
             var dbMask = try MGF1(Hash, mgf_out, h, mgf_len);
 
             // 8.   Let DB = maskedDB \xor dbMask.
@@ -1071,7 +1116,7 @@ pub const rsa = struct {
             // Reject modulus below 512 bits.
             // 512-bit RSA was factored in 1999, so this limit barely means anything,
             // but establish some limit now to ratchet in what we can.
-            const _n = Modulus.fromBytes(modulus_bytes, .Big) catch return error.CertificatePublicKeyInvalid;
+            const _n = Modulus.fromBytes(modulus_bytes, .big) catch return error.CertificatePublicKeyInvalid;
             if (_n.bits() < 512) return error.CertificatePublicKeyInvalid;
 
             // Exponent must be odd and greater than 2.
@@ -1081,7 +1126,7 @@ pub const rsa = struct {
             // Windows commonly does.
             // [1] https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/ns-wincrypt-rsapubkey
             if (pub_bytes.len > 4) return error.CertificatePublicKeyInvalid;
-            const _e = Fe.fromBytes(_n, pub_bytes, .Big) catch return error.CertificatePublicKeyInvalid;
+            const _e = Fe.fromBytes(_n, pub_bytes, .big) catch return error.CertificatePublicKeyInvalid;
             if (!_e.isOdd()) return error.CertificatePublicKeyInvalid;
             const e_v = _e.toPrimitive(u32) catch return error.CertificatePublicKeyInvalid;
             if (e_v < 2) return error.CertificatePublicKeyInvalid;
@@ -1112,10 +1157,12 @@ pub const rsa = struct {
     };
 
     fn encrypt(comptime modulus_len: usize, msg: [modulus_len]u8, public_key: PublicKey) ![modulus_len]u8 {
-        const m = Fe.fromBytes(public_key.n, &msg, .Big) catch return error.MessageTooLong;
+        const m = Fe.fromBytes(public_key.n, &msg, .big) catch return error.MessageTooLong;
         const e = public_key.n.powPublic(m, public_key.e) catch unreachable;
         var res: [modulus_len]u8 = undefined;
-        e.toBytes(&res, .Big) catch unreachable;
+        e.toBytes(&res, .big) catch unreachable;
         return res;
     }
 };
+
+const use_vectors = @import("builtin").zig_backend != .stage2_x86_64;

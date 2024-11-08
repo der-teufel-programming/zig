@@ -9,11 +9,11 @@ pub const panic = common.panic;
 
 comptime {
     if (common.want_ppc_abi) {
-        @export(__divtf3, .{ .name = "__divkf3", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&__divtf3, .{ .name = "__divkf3", .linkage = common.linkage, .visibility = common.visibility });
     } else if (common.want_sparc_abi) {
-        @export(_Qp_div, .{ .name = "_Qp_div", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&_Qp_div, .{ .name = "_Qp_div", .linkage = common.linkage, .visibility = common.visibility });
     }
-    @export(__divtf3, .{ .name = "__divtf3", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&__divtf3, .{ .name = "__divtf3", .linkage = common.linkage, .visibility = common.visibility });
 }
 
 pub fn __divtf3(a: f128, b: f128) callconv(.C) f128 {
@@ -140,7 +140,7 @@ inline fn div(a: f128, b: f128) f128 {
     var reciprocal: u128 = undefined;
 
     // NOTE: This operation is equivalent to __multi3, which is not implemented
-    //       in some architechure
+    //       in some architecture
     var r64q63: u128 = undefined;
     var r64q127: u128 = undefined;
     var r64cH: u128 = undefined;

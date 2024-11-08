@@ -51,7 +51,7 @@ fn testBasicWriteStream(w: anytype, slice_stream: anytype) !void {
     defer arena_allocator.deinit();
     try w.write(try getJsonObject(arena_allocator.allocator()));
 
-    try w.objectField("string");
+    try w.objectFieldRaw("\"string\"");
     try w.write("This is a string");
 
     try w.objectField("array");
@@ -74,16 +74,16 @@ fn testBasicWriteStream(w: anytype, slice_stream: anytype) !void {
         \\{
         \\  "object": {
         \\    "one": 1,
-        \\    "two": 2.0e+00
+        \\    "two": 2e0
         \\  },
         \\  "string": "This is a string",
         \\  "array": [
         \\    "Another string",
         \\    1,
-        \\    3.5e+00
+        \\    3.5e0
         \\  ],
         \\  "int": 10,
-        \\  "float": 3.5e+00
+        \\  "float": 3.5e0
         \\}
     ;
     try std.testing.expectEqualStrings(expected, result);
@@ -123,12 +123,12 @@ test "stringify basic types" {
     try testStringify("null", @as(?u8, null), .{});
     try testStringify("null", @as(?*u32, null), .{});
     try testStringify("42", 42, .{});
-    try testStringify("4.2e+01", 42.0, .{});
+    try testStringify("4.2e1", 42.0, .{});
     try testStringify("42", @as(u8, 42), .{});
     try testStringify("42", @as(u128, 42), .{});
     try testStringify("9999999999999999", 9999999999999999, .{});
-    try testStringify("4.2e+01", @as(f32, 42), .{});
-    try testStringify("4.2e+01", @as(f64, 42), .{});
+    try testStringify("4.2e1", @as(f32, 42), .{});
+    try testStringify("4.2e1", @as(f64, 42), .{});
     try testStringify("\"ItBroke\"", @as(anyerror, error.ItBroke), .{});
     try testStringify("\"ItBroke\"", error.ItBroke, .{});
 }
@@ -170,6 +170,15 @@ test "stringify enums" {
     };
     try testStringify("\"foo\"", E.foo, .{});
     try testStringify("\"bar\"", E.bar, .{});
+}
+
+test "stringify non-exhaustive enum" {
+    const E = enum(u8) {
+        foo = 0,
+        _,
+    };
+    try testStringify("\"foo\"", E.foo, .{});
+    try testStringify("1", @as(E, @enumFromInt(1)), .{});
 }
 
 test "stringify enum literals" {
@@ -442,4 +451,54 @@ test "print" {
 test "nonportable numbers" {
     try testStringify("9999999999999999", 9999999999999999, .{});
     try testStringify("\"9999999999999999\"", 9999999999999999, .{ .emit_nonportable_numbers_as_strings = true });
+}
+
+test "stringify raw streaming" {
+    var out_buf: [1024]u8 = undefined;
+    var slice_stream = std.io.fixedBufferStream(&out_buf);
+    const out = slice_stream.writer();
+
+    {
+        var w = writeStream(out, .{ .whitespace = .indent_2 });
+        try testRawStreaming(&w, &slice_stream);
+    }
+
+    {
+        var w = writeStreamMaxDepth(out, .{ .whitespace = .indent_2 }, 8);
+        try testRawStreaming(&w, &slice_stream);
+    }
+
+    {
+        var w = writeStreamMaxDepth(out, .{ .whitespace = .indent_2 }, null);
+        try testRawStreaming(&w, &slice_stream);
+    }
+
+    {
+        var w = writeStreamArbitraryDepth(testing.allocator, out, .{ .whitespace = .indent_2 });
+        defer w.deinit();
+        try testRawStreaming(&w, &slice_stream);
+    }
+}
+
+fn testRawStreaming(w: anytype, slice_stream: anytype) !void {
+    slice_stream.reset();
+
+    try w.beginObject();
+    try w.beginObjectFieldRaw();
+    try w.stream.writeAll("\"long");
+    try w.stream.writeAll(" key\"");
+    w.endObjectFieldRaw();
+    try w.beginWriteRaw();
+    try w.stream.writeAll("\"long");
+    try w.stream.writeAll(" value\"");
+    w.endWriteRaw();
+    try w.endObject();
+
+    const result = slice_stream.getWritten();
+    const expected =
+        \\{
+        \\  "long key": "long value"
+        \\}
+    ;
+    try std.testing.expectEqualStrings(expected, result);
 }

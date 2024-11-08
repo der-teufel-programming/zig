@@ -6,24 +6,22 @@
 //! https://git.musl-libc.org/cgit/musl/tree/src/math/fma.c
 
 const std = @import("std");
-const builtin = @import("builtin");
 const math = std.math;
 const expect = std.testing.expect;
-const arch = builtin.cpu.arch;
 const common = @import("common.zig");
 
 pub const panic = common.panic;
 
 comptime {
-    @export(__fmah, .{ .name = "__fmah", .linkage = common.linkage, .visibility = common.visibility });
-    @export(fmaf, .{ .name = "fmaf", .linkage = common.linkage, .visibility = common.visibility });
-    @export(fma, .{ .name = "fma", .linkage = common.linkage, .visibility = common.visibility });
-    @export(__fmax, .{ .name = "__fmax", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&__fmah, .{ .name = "__fmah", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&fmaf, .{ .name = "fmaf", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&fma, .{ .name = "fma", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&__fmax, .{ .name = "__fmax", .linkage = common.linkage, .visibility = common.visibility });
     if (common.want_ppc_abi) {
-        @export(fmaq, .{ .name = "fmaf128", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&fmaq, .{ .name = "fmaf128", .linkage = common.linkage, .visibility = common.visibility });
     }
-    @export(fmaq, .{ .name = "fmaq", .linkage = common.linkage, .visibility = common.visibility });
-    @export(fmal, .{ .name = "fmal", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&fmaq, .{ .name = "fmaq", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&fmal, .{ .name = "fmal", .linkage = common.linkage, .visibility = common.visibility });
 }
 
 pub fn __fmah(x: f16, y: f16, z: f16) callconv(.C) f16 {
@@ -61,13 +59,13 @@ pub fn fma(x: f64, y: f64, z: f64) callconv(.C) f64 {
     }
 
     const x1 = math.frexp(x);
-    var ex = x1.exponent;
-    var xs = x1.significand;
+    const ex = x1.exponent;
+    const xs = x1.significand;
     const x2 = math.frexp(y);
-    var ey = x2.exponent;
-    var ys = x2.significand;
+    const ey = x2.exponent;
+    const ys = x2.significand;
     const x3 = math.frexp(z);
-    var ez = x3.exponent;
+    const ez = x3.exponent;
     var zs = x3.significand;
 
     var spread = ex + ey - ez;
@@ -120,13 +118,13 @@ pub fn fmaq(x: f128, y: f128, z: f128) callconv(.C) f128 {
     }
 
     const x1 = math.frexp(x);
-    var ex = x1.exponent;
-    var xs = x1.significand;
+    const ex = x1.exponent;
+    const xs = x1.significand;
     const x2 = math.frexp(y);
-    var ey = x2.exponent;
-    var ys = x2.significand;
+    const ey = x2.exponent;
+    const ys = x2.significand;
     const x3 = math.frexp(z);
-    var ez = x3.exponent;
+    const ez = x3.exponent;
     var zs = x3.significand;
 
     var spread = ex + ey - ez;
@@ -153,7 +151,7 @@ pub fn fmaq(x: f128, y: f128, z: f128) callconv(.C) f128 {
 }
 
 pub fn fmal(x: c_longdouble, y: c_longdouble, z: c_longdouble) callconv(.C) c_longdouble {
-    switch (@typeInfo(c_longdouble).Float.bits) {
+    switch (@typeInfo(c_longdouble).float.bits) {
         16 => return __fmah(x, y, z),
         32 => return fmaf(x, y, z),
         64 => return fma(x, y, z),
@@ -183,15 +181,15 @@ fn dd_mul(a: f64, b: f64) dd {
     var p = a * split;
     var ha = a - p;
     ha += p;
-    var la = a - ha;
+    const la = a - ha;
 
     p = b * split;
     var hb = b - p;
     hb += p;
-    var lb = b - hb;
+    const lb = b - hb;
 
     p = ha * hb;
-    var q = ha * lb + la * hb;
+    const q = ha * lb + la * hb;
 
     ret.hi = p + q;
     ret.lo = p - ret.hi + q + la * lb;
@@ -303,15 +301,15 @@ fn dd_mul128(a: f128, b: f128) dd128 {
     var p = a * split;
     var ha = a - p;
     ha += p;
-    var la = a - ha;
+    const la = a - ha;
 
     p = b * split;
     var hb = b - p;
     hb += p;
-    var lb = b - hb;
+    const lb = b - hb;
 
     p = ha * hb;
-    var q = ha * lb + la * hb;
+    const q = ha * lb + la * hb;
 
     ret.hi = p + q;
     ret.lo = p - ret.hi + q + la * lb;

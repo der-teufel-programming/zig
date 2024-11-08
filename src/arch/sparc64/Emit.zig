@@ -5,11 +5,10 @@ const std = @import("std");
 const Endian = std.builtin.Endian;
 const assert = std.debug.assert;
 const link = @import("../../link.zig");
-const Module = @import("../../Module.zig");
-const ErrorMsg = Module.ErrorMsg;
+const Zcu = @import("../../Zcu.zig");
+const ErrorMsg = Zcu.ErrorMsg;
 const Liveness = @import("../../Liveness.zig");
 const log = std.log.scoped(.sparcv9_emit);
-const DebugInfoOutput = @import("../../codegen.zig").DebugInfoOutput;
 
 const Emit = @This();
 const Mir = @import("Mir.zig");
@@ -19,10 +18,10 @@ const Register = bits.Register;
 
 mir: Mir,
 bin_file: *link.File,
-debug_output: DebugInfoOutput,
+debug_output: link.File.DebugInfoOutput,
 target: *const std.Target,
 err_msg: ?*ErrorMsg = null,
-src_loc: Module.SrcLoc,
+src_loc: Zcu.LazySrcLoc,
 code: *std.ArrayList(u8),
 
 prev_di_line: u32,
@@ -31,16 +30,16 @@ prev_di_column: u32,
 prev_di_pc: usize,
 
 /// The branch type of every branch
-branch_types: std.AutoHashMapUnmanaged(Mir.Inst.Index, BranchType) = .{},
+branch_types: std.AutoHashMapUnmanaged(Mir.Inst.Index, BranchType) = .empty,
 /// For every forward branch, maps the target instruction to a list of
 /// branches which branch to this target instruction
-branch_forward_origins: std.AutoHashMapUnmanaged(Mir.Inst.Index, std.ArrayListUnmanaged(Mir.Inst.Index)) = .{},
+branch_forward_origins: std.AutoHashMapUnmanaged(Mir.Inst.Index, std.ArrayListUnmanaged(Mir.Inst.Index)) = .empty,
 /// For backward branches: stores the code offset of the target
 /// instruction
 ///
 /// For forward branches: stores the code offset of the branch
 /// instruction
-code_offset_mapping: std.AutoHashMapUnmanaged(Mir.Inst.Index, usize) = .{},
+code_offset_mapping: std.AutoHashMapUnmanaged(Mir.Inst.Index, usize) = .empty,
 
 const InnerError = error{
     OutOfMemory,
@@ -152,14 +151,16 @@ pub fn emitMir(
 }
 
 pub fn deinit(emit: *Emit) void {
+    const comp = emit.bin_file.comp;
+    const gpa = comp.gpa;
     var iter = emit.branch_forward_origins.valueIterator();
     while (iter.next()) |origin_list| {
-        origin_list.deinit(emit.bin_file.allocator);
+        origin_list.deinit(gpa);
     }
 
-    emit.branch_types.deinit(emit.bin_file.allocator);
-    emit.branch_forward_origins.deinit(emit.bin_file.allocator);
-    emit.code_offset_mapping.deinit(emit.bin_file.allocator);
+    emit.branch_types.deinit(gpa);
+    emit.branch_forward_origins.deinit(gpa);
+    emit.code_offset_mapping.deinit(gpa);
     emit.* = undefined;
 }
 
@@ -509,9 +510,11 @@ fn dbgAdvancePCAndLine(emit: *Emit, line: u32, column: u32) !void {
 }
 
 fn fail(emit: *Emit, comptime format: []const u8, args: anytype) InnerError {
-    @setCold(true);
+    @branchHint(.cold);
     assert(emit.err_msg == null);
-    emit.err_msg = try ErrorMsg.create(emit.bin_file.allocator, emit.src_loc, format, args);
+    const comp = emit.bin_file.comp;
+    const gpa = comp.gpa;
+    emit.err_msg = try ErrorMsg.create(gpa, emit.src_loc, format, args);
     return error.EmitFail;
 }
 
@@ -537,8 +540,9 @@ fn isBranch(tag: Mir.Inst.Tag) bool {
 }
 
 fn lowerBranches(emit: *Emit) !void {
+    const comp = emit.bin_file.comp;
+    const gpa = comp.gpa;
     const mir_tags = emit.mir.instructions.items(.tag);
-    const allocator = emit.bin_file.allocator;
 
     // First pass: Note down all branches and their target
     // instructions, i.e. populate branch_types,
@@ -552,7 +556,7 @@ fn lowerBranches(emit: *Emit) !void {
             const target_inst = emit.branchTarget(inst);
 
             // Remember this branch instruction
-            try emit.branch_types.put(allocator, inst, BranchType.default(tag));
+            try emit.branch_types.put(gpa, inst, BranchType.default(tag));
 
             // Forward branches require some extra stuff: We only
             // know their offset once we arrive at the target
@@ -562,14 +566,14 @@ fn lowerBranches(emit: *Emit) !void {
             // etc.
             if (target_inst > inst) {
                 // Remember the branch instruction index
-                try emit.code_offset_mapping.put(allocator, inst, 0);
+                try emit.code_offset_mapping.put(gpa, inst, 0);
 
                 if (emit.branch_forward_origins.getPtr(target_inst)) |origin_list| {
-                    try origin_list.append(allocator, inst);
+                    try origin_list.append(gpa, inst);
                 } else {
-                    var origin_list: std.ArrayListUnmanaged(Mir.Inst.Index) = .{};
-                    try origin_list.append(allocator, inst);
-                    try emit.branch_forward_origins.put(allocator, target_inst, origin_list);
+                    var origin_list: std.ArrayListUnmanaged(Mir.Inst.Index) = .empty;
+                    try origin_list.append(gpa, inst);
+                    try emit.branch_forward_origins.put(gpa, target_inst, origin_list);
                 }
             }
 
@@ -579,7 +583,7 @@ fn lowerBranches(emit: *Emit) !void {
             // putNoClobber may not be used as the put operation
             // may clobber the entry when multiple branches branch
             // to the same target instruction
-            try emit.code_offset_mapping.put(allocator, target_inst, 0);
+            try emit.code_offset_mapping.put(gpa, target_inst, 0);
         }
     }
 
@@ -677,7 +681,7 @@ fn writeInstruction(emit: *Emit, instruction: Instruction) !void {
     // SPARCv9 instructions are always arranged in BE regardless of the
     // endianness mode the CPU is running in (Section 3.1 of the ISA specification).
     // This is to ease porting in case someone wants to do a LE SPARCv9 backend.
-    const endian = Endian.Big;
+    const endian = Endian.big;
 
     std.mem.writeInt(u32, try emit.code.addManyAsArray(4), instruction.toU32(), endian);
 }

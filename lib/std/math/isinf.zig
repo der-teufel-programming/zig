@@ -5,7 +5,7 @@ const expect = std.testing.expect;
 /// Returns whether x is an infinity, ignoring sign.
 pub inline fn isInf(x: anytype) bool {
     const T = @TypeOf(x);
-    const TBits = std.meta.Int(.unsigned, @typeInfo(T).Float.bits);
+    const TBits = std.meta.Int(.unsigned, @typeInfo(T).float.bits);
     const remove_sign = ~@as(TBits, 0) >> 1;
     return @as(TBits, @bitCast(x)) & remove_sign == @as(TBits, @bitCast(math.inf(T)));
 }
@@ -20,7 +20,7 @@ pub inline fn isNegativeInf(x: anytype) bool {
     return x == -math.inf(@TypeOf(x));
 }
 
-test "math.isInf" {
+test isInf {
     inline for ([_]type{ f16, f32, f64, f80, f128 }) |T| {
         try expect(!isInf(@as(T, 0.0)));
         try expect(!isInf(@as(T, -0.0)));
@@ -31,7 +31,7 @@ test "math.isInf" {
     }
 }
 
-test "math.isPositiveInf" {
+test isPositiveInf {
     inline for ([_]type{ f16, f32, f64, f80, f128 }) |T| {
         try expect(!isPositiveInf(@as(T, 0.0)));
         try expect(!isPositiveInf(@as(T, -0.0)));
@@ -42,7 +42,7 @@ test "math.isPositiveInf" {
     }
 }
 
-test "math.isNegativeInf" {
+test isNegativeInf {
     inline for ([_]type{ f16, f32, f64, f80, f128 }) |T| {
         try expect(!isNegativeInf(@as(T, 0.0)));
         try expect(!isNegativeInf(@as(T, -0.0)));

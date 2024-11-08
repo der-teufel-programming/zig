@@ -11,6 +11,6 @@ export fn entry() void {
 // error
 // target=native
 //
-// :3:5: error: duplicate union field: 'foo'
-// :2:5: note: other field here
+// :2:5: error: duplicate union member name 'foo'
+// :3:5: note: duplicate name here
 // :1:11: note: union declared here

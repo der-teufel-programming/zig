@@ -7,20 +7,19 @@ const math = std.math;
 const Mir = @import("Mir.zig");
 const bits = @import("bits.zig");
 const link = @import("../../link.zig");
-const Module = @import("../../Module.zig");
-const ErrorMsg = Module.ErrorMsg;
+const Zcu = @import("../../Zcu.zig");
+const ErrorMsg = Zcu.ErrorMsg;
 const assert = std.debug.assert;
 const Instruction = bits.Instruction;
 const Register = bits.Register;
 const log = std.log.scoped(.aarch64_emit);
-const DebugInfoOutput = @import("../../codegen.zig").DebugInfoOutput;
 
 mir: Mir,
 bin_file: *link.File,
-debug_output: DebugInfoOutput,
+debug_output: link.File.DebugInfoOutput,
 target: *const std.Target,
 err_msg: ?*ErrorMsg = null,
-src_loc: Module.SrcLoc,
+src_loc: Zcu.LazySrcLoc,
 code: *std.ArrayList(u8),
 
 prev_di_line: u32,
@@ -34,18 +33,18 @@ prev_di_pc: usize,
 saved_regs_stack_space: u32,
 
 /// The branch type of every branch
-branch_types: std.AutoHashMapUnmanaged(Mir.Inst.Index, BranchType) = .{},
+branch_types: std.AutoHashMapUnmanaged(Mir.Inst.Index, BranchType) = .empty,
 
 /// For every forward branch, maps the target instruction to a list of
 /// branches which branch to this target instruction
-branch_forward_origins: std.AutoHashMapUnmanaged(Mir.Inst.Index, std.ArrayListUnmanaged(Mir.Inst.Index)) = .{},
+branch_forward_origins: std.AutoHashMapUnmanaged(Mir.Inst.Index, std.ArrayListUnmanaged(Mir.Inst.Index)) = .empty,
 
 /// For backward branches: stores the code offset of the target
 /// instruction
 ///
 /// For forward branches: stores the code offset of the branch
 /// instruction
-code_offset_mapping: std.AutoHashMapUnmanaged(Mir.Inst.Index, usize) = .{},
+code_offset_mapping: std.AutoHashMapUnmanaged(Mir.Inst.Index, usize) = .empty,
 
 /// The final stack frame size of the function (already aligned to the
 /// respective stack alignment). Does not include prologue stack space.
@@ -218,14 +217,16 @@ pub fn emitMir(
 }
 
 pub fn deinit(emit: *Emit) void {
+    const comp = emit.bin_file.comp;
+    const gpa = comp.gpa;
     var iter = emit.branch_forward_origins.valueIterator();
     while (iter.next()) |origin_list| {
-        origin_list.deinit(emit.bin_file.allocator);
+        origin_list.deinit(gpa);
     }
 
-    emit.branch_types.deinit(emit.bin_file.allocator);
-    emit.branch_forward_origins.deinit(emit.bin_file.allocator);
-    emit.code_offset_mapping.deinit(emit.bin_file.allocator);
+    emit.branch_types.deinit(gpa);
+    emit.branch_forward_origins.deinit(gpa);
+    emit.code_offset_mapping.deinit(gpa);
     emit.* = undefined;
 }
 
@@ -314,8 +315,9 @@ fn branchTarget(emit: *Emit, inst: Mir.Inst.Index) Mir.Inst.Index {
 }
 
 fn lowerBranches(emit: *Emit) !void {
+    const comp = emit.bin_file.comp;
+    const gpa = comp.gpa;
     const mir_tags = emit.mir.instructions.items(.tag);
-    const allocator = emit.bin_file.allocator;
 
     // First pass: Note down all branches and their target
     // instructions, i.e. populate branch_types,
@@ -329,7 +331,7 @@ fn lowerBranches(emit: *Emit) !void {
             const target_inst = emit.branchTarget(inst);
 
             // Remember this branch instruction
-            try emit.branch_types.put(allocator, inst, BranchType.default(tag));
+            try emit.branch_types.put(gpa, inst, BranchType.default(tag));
 
             // Forward branches require some extra stuff: We only
             // know their offset once we arrive at the target
@@ -339,14 +341,14 @@ fn lowerBranches(emit: *Emit) !void {
             // etc.
             if (target_inst > inst) {
                 // Remember the branch instruction index
-                try emit.code_offset_mapping.put(allocator, inst, 0);
+                try emit.code_offset_mapping.put(gpa, inst, 0);
 
                 if (emit.branch_forward_origins.getPtr(target_inst)) |origin_list| {
-                    try origin_list.append(allocator, inst);
+                    try origin_list.append(gpa, inst);
                 } else {
-                    var origin_list: std.ArrayListUnmanaged(Mir.Inst.Index) = .{};
-                    try origin_list.append(allocator, inst);
-                    try emit.branch_forward_origins.put(allocator, target_inst, origin_list);
+                    var origin_list: std.ArrayListUnmanaged(Mir.Inst.Index) = .empty;
+                    try origin_list.append(gpa, inst);
+                    try emit.branch_forward_origins.put(gpa, target_inst, origin_list);
                 }
             }
 
@@ -356,7 +358,7 @@ fn lowerBranches(emit: *Emit) !void {
             // putNoClobber may not be used as the put operation
             // may clobber the entry when multiple branches branch
             // to the same target instruction
-            try emit.code_offset_mapping.put(allocator, target_inst, 0);
+            try emit.code_offset_mapping.put(gpa, target_inst, 0);
         }
     }
 
@@ -427,45 +429,58 @@ fn writeInstruction(emit: *Emit, instruction: Instruction) !void {
 }
 
 fn fail(emit: *Emit, comptime format: []const u8, args: anytype) InnerError {
-    @setCold(true);
+    @branchHint(.cold);
     assert(emit.err_msg == null);
-    emit.err_msg = try ErrorMsg.create(emit.bin_file.allocator, emit.src_loc, format, args);
+    const comp = emit.bin_file.comp;
+    const gpa = comp.gpa;
+    emit.err_msg = try ErrorMsg.create(gpa, emit.src_loc, format, args);
     return error.EmitFail;
 }
 
-fn dbgAdvancePCAndLine(self: *Emit, line: u32, column: u32) !void {
-    const delta_line = @as(i32, @intCast(line)) - @as(i32, @intCast(self.prev_di_line));
-    const delta_pc: usize = self.code.items.len - self.prev_di_pc;
-    switch (self.debug_output) {
+fn dbgAdvancePCAndLine(emit: *Emit, line: u32, column: u32) InnerError!void {
+    const delta_line = @as(i33, line) - @as(i33, emit.prev_di_line);
+    const delta_pc: usize = emit.code.items.len - emit.prev_di_pc;
+    log.debug("  (advance pc={d} and line={d})", .{ delta_pc, delta_line });
+    switch (emit.debug_output) {
         .dwarf => |dw| {
+            if (column != emit.prev_di_column) try dw.setColumn(column);
             try dw.advancePCAndLine(delta_line, delta_pc);
-            self.prev_di_line = line;
-            self.prev_di_column = column;
-            self.prev_di_pc = self.code.items.len;
+            emit.prev_di_line = line;
+            emit.prev_di_column = column;
+            emit.prev_di_pc = emit.code.items.len;
         },
         .plan9 => |dbg_out| {
             if (delta_pc <= 0) return; // only do this when the pc changes
 
             // increasing the line number
-            try link.File.Plan9.changeLine(&dbg_out.dbg_line, delta_line);
+            try link.File.Plan9.changeLine(&dbg_out.dbg_line, @intCast(delta_line));
             // increasing the pc
             const d_pc_p9 = @as(i64, @intCast(delta_pc)) - dbg_out.pc_quanta;
             if (d_pc_p9 > 0) {
                 // minus one because if its the last one, we want to leave space to change the line which is one pc quanta
-                try dbg_out.dbg_line.append(@as(u8, @intCast(@divExact(d_pc_p9, dbg_out.pc_quanta) + 128)) - dbg_out.pc_quanta);
+                var diff = @divExact(d_pc_p9, dbg_out.pc_quanta) - dbg_out.pc_quanta;
+                while (diff > 0) {
+                    if (diff < 64) {
+                        try dbg_out.dbg_line.append(@intCast(diff + 128));
+                        diff = 0;
+                    } else {
+                        try dbg_out.dbg_line.append(@intCast(64 + 128));
+                        diff -= 64;
+                    }
+                }
                 if (dbg_out.pcop_change_index) |pci|
                     dbg_out.dbg_line.items[pci] += 1;
-                dbg_out.pcop_change_index = @as(u32, @intCast(dbg_out.dbg_line.items.len - 1));
+                dbg_out.pcop_change_index = @intCast(dbg_out.dbg_line.items.len - 1);
             } else if (d_pc_p9 == 0) {
                 // we don't need to do anything, because adding the pc quanta does it for us
             } else unreachable;
             if (dbg_out.start_line == null)
-                dbg_out.start_line = self.prev_di_line;
+                dbg_out.start_line = emit.prev_di_line;
             dbg_out.end_line = line;
             // only do this if the pc changed
-            self.prev_di_line = line;
-            self.prev_di_column = column;
-            self.prev_di_pc = self.code.items.len;
+            emit.prev_di_line = line;
+            emit.prev_di_column = column;
+            emit.prev_di_pc = emit.code.items.len;
         },
         .none => {},
     }
@@ -633,22 +648,25 @@ fn mirDbgLine(emit: *Emit, inst: Mir.Inst.Index) !void {
     }
 }
 
-fn mirDebugPrologueEnd(self: *Emit) !void {
-    switch (self.debug_output) {
+fn mirDebugPrologueEnd(emit: *Emit) !void {
+    switch (emit.debug_output) {
         .dwarf => |dw| {
             try dw.setPrologueEnd();
-            try self.dbgAdvancePCAndLine(self.prev_di_line, self.prev_di_column);
+            log.debug("mirDbgPrologueEnd (line={d}, col={d})", .{
+                emit.prev_di_line, emit.prev_di_column,
+            });
+            try emit.dbgAdvancePCAndLine(emit.prev_di_line, emit.prev_di_column);
         },
         .plan9 => {},
         .none => {},
     }
 }
 
-fn mirDebugEpilogueBegin(self: *Emit) !void {
-    switch (self.debug_output) {
+fn mirDebugEpilogueBegin(emit: *Emit) !void {
+    switch (emit.debug_output) {
         .dwarf => |dw| {
             try dw.setEpilogueBegin();
-            try self.dbgAdvancePCAndLine(self.prev_di_line, self.prev_di_column);
+            try emit.dbgAdvancePCAndLine(emit.prev_di_line, emit.prev_di_column);
         },
         .plan9 => {},
         .none => {},
@@ -658,6 +676,7 @@ fn mirDebugEpilogueBegin(self: *Emit) !void {
 fn mirCallExtern(emit: *Emit, inst: Mir.Inst.Index) !void {
     assert(emit.mir.instructions.items(.tag)[inst] == .call_extern);
     const relocation = emit.mir.instructions.items(.data)[inst].relocation;
+    _ = relocation;
 
     const offset = blk: {
         const offset = @as(u32, @intCast(emit.code.items.len));
@@ -665,20 +684,23 @@ fn mirCallExtern(emit: *Emit, inst: Mir.Inst.Index) !void {
         try emit.writeInstruction(Instruction.bl(0));
         break :blk offset;
     };
+    _ = offset;
 
-    if (emit.bin_file.cast(link.File.MachO)) |macho_file| {
-        // Add relocation to the decl.
-        const atom_index = macho_file.getAtomIndexForSymbol(.{ .sym_index = relocation.atom_index }).?;
-        const target = macho_file.getGlobalByIndex(relocation.sym_index);
-        try link.File.MachO.Atom.addRelocation(macho_file, atom_index, .{
-            .type = .branch,
-            .target = target,
-            .offset = offset,
-            .addend = 0,
-            .pcrel = true,
-            .length = 2,
-        });
-    } else if (emit.bin_file.cast(link.File.Coff)) |_| {
+    if (emit.bin_file.cast(.macho)) |macho_file| {
+        _ = macho_file;
+        @panic("TODO mirCallExtern");
+        // // Add relocation to the decl.
+        // const atom_index = macho_file.getAtomIndexForSymbol(.{ .sym_index = relocation.atom_index }).?;
+        // const target = macho_file.getGlobalByIndex(relocation.sym_index);
+        // try link.File.MachO.Atom.addRelocation(macho_file, atom_index, .{
+        //     .type = .branch,
+        //     .target = target,
+        //     .offset = offset,
+        //     .addend = 0,
+        //     .pcrel = true,
+        //     .length = 2,
+        // });
+    } else if (emit.bin_file.cast(.coff)) |_| {
         unreachable; // Calling imports is handled via `.load_memory_import`
     } else {
         return emit.fail("Implement call_extern for linking backends != {{ COFF, MachO }}", .{});
@@ -880,34 +902,36 @@ fn mirLoadMemoryPie(emit: *Emit, inst: Mir.Inst.Index) !void {
         else => unreachable,
     }
 
-    if (emit.bin_file.cast(link.File.MachO)) |macho_file| {
-        const Atom = link.File.MachO.Atom;
-        const Relocation = Atom.Relocation;
-        const atom_index = macho_file.getAtomIndexForSymbol(.{ .sym_index = data.atom_index }).?;
-        try Atom.addRelocations(macho_file, atom_index, &[_]Relocation{ .{
-            .target = .{ .sym_index = data.sym_index },
-            .offset = offset,
-            .addend = 0,
-            .pcrel = true,
-            .length = 2,
-            .type = switch (tag) {
-                .load_memory_got, .load_memory_ptr_got => Relocation.Type.got_page,
-                .load_memory_direct, .load_memory_ptr_direct => Relocation.Type.page,
-                else => unreachable,
-            },
-        }, .{
-            .target = .{ .sym_index = data.sym_index },
-            .offset = offset + 4,
-            .addend = 0,
-            .pcrel = false,
-            .length = 2,
-            .type = switch (tag) {
-                .load_memory_got, .load_memory_ptr_got => Relocation.Type.got_pageoff,
-                .load_memory_direct, .load_memory_ptr_direct => Relocation.Type.pageoff,
-                else => unreachable,
-            },
-        } });
-    } else if (emit.bin_file.cast(link.File.Coff)) |coff_file| {
+    if (emit.bin_file.cast(.macho)) |macho_file| {
+        _ = macho_file;
+        @panic("TODO mirLoadMemoryPie");
+        // const Atom = link.File.MachO.Atom;
+        // const Relocation = Atom.Relocation;
+        // const atom_index = macho_file.getAtomIndexForSymbol(.{ .sym_index = data.atom_index }).?;
+        // try Atom.addRelocations(macho_file, atom_index, &[_]Relocation{ .{
+        //     .target = .{ .sym_index = data.sym_index },
+        //     .offset = offset,
+        //     .addend = 0,
+        //     .pcrel = true,
+        //     .length = 2,
+        //     .type = switch (tag) {
+        //         .load_memory_got, .load_memory_ptr_got => Relocation.Type.got_page,
+        //         .load_memory_direct, .load_memory_ptr_direct => Relocation.Type.page,
+        //         else => unreachable,
+        //     },
+        // }, .{
+        //     .target = .{ .sym_index = data.sym_index },
+        //     .offset = offset + 4,
+        //     .addend = 0,
+        //     .pcrel = false,
+        //     .length = 2,
+        //     .type = switch (tag) {
+        //         .load_memory_got, .load_memory_ptr_got => Relocation.Type.got_pageoff,
+        //         .load_memory_direct, .load_memory_ptr_direct => Relocation.Type.pageoff,
+        //         else => unreachable,
+        //     },
+        // } });
+    } else if (emit.bin_file.cast(.coff)) |coff_file| {
         const atom_index = coff_file.getAtomIndexForSymbol(.{ .sym_index = data.atom_index, .file = null }).?;
         const target = switch (tag) {
             .load_memory_got,
@@ -918,7 +942,7 @@ fn mirLoadMemoryPie(emit: *Emit, inst: Mir.Inst.Index) !void {
             .load_memory_import => coff_file.getGlobalByIndex(data.sym_index),
             else => unreachable,
         };
-        try link.File.Coff.Atom.addRelocation(coff_file, atom_index, .{
+        try coff_file.addRelocation(atom_index, .{
             .target = target,
             .offset = offset,
             .addend = 0,
@@ -935,7 +959,7 @@ fn mirLoadMemoryPie(emit: *Emit, inst: Mir.Inst.Index) !void {
                 else => unreachable,
             },
         });
-        try link.File.Coff.Atom.addRelocation(coff_file, atom_index, .{
+        try coff_file.addRelocation(atom_index, .{
             .target = target,
             .offset = offset + 4,
             .addend = 0,

@@ -2,8 +2,8 @@ const std = @import("../../std.zig");
 const maxInt = std.math.maxInt;
 const linux = std.os.linux;
 const SYS = linux.SYS;
-const iovec = std.os.iovec;
-const iovec_const = std.os.iovec_const;
+const iovec = std.posix.iovec;
+const iovec_const = std.posix.iovec_const;
 
 const pid_t = linux.pid_t;
 const uid_t = linux.uid_t;
@@ -100,10 +100,32 @@ pub fn syscall6(
     );
 }
 
-const CloneFn = *const fn (arg: usize) callconv(.C) u8;
-
-/// This matches the libc clone function.
-pub extern fn clone(func: CloneFn, stack: usize, flags: usize, arg: usize, ptid: *i32, tls: usize, ctid: *i32) usize;
+pub fn clone() callconv(.Naked) usize {
+    asm volatile (
+        \\      movl $56,%%eax // SYS_clone
+        \\      movq %%rdi,%%r11
+        \\      movq %%rdx,%%rdi
+        \\      movq %%r8,%%rdx
+        \\      movq %%r9,%%r8
+        \\      movq 8(%%rsp),%%r10
+        \\      movq %%r11,%%r9
+        \\      andq $-16,%%rsi
+        \\      subq $8,%%rsi
+        \\      movq %%rcx,(%%rsi)
+        \\      syscall
+        \\      testq %%rax,%%rax
+        \\      jz 1f
+        \\      retq
+        \\1:    .cfi_undefined %%rip
+        \\      xorl %%ebp,%%ebp
+        \\      popq %%rdi
+        \\      callq *%%r9
+        \\      movl %%eax,%%edi
+        \\      movl $60,%%eax // SYS_exit
+        \\      syscall
+        \\
+    );
+}
 
 pub const restore = restore_rt;
 
@@ -131,29 +153,6 @@ pub const nlink_t = usize;
 pub const blksize_t = isize;
 pub const blkcnt_t = isize;
 
-pub const O = struct {
-    pub const CREAT = 0o100;
-    pub const EXCL = 0o200;
-    pub const NOCTTY = 0o400;
-    pub const TRUNC = 0o1000;
-    pub const APPEND = 0o2000;
-    pub const NONBLOCK = 0o4000;
-    pub const DSYNC = 0o10000;
-    pub const SYNC = 0o4010000;
-    pub const RSYNC = 0o4010000;
-    pub const DIRECTORY = 0o200000;
-    pub const NOFOLLOW = 0o400000;
-    pub const CLOEXEC = 0o2000000;
-
-    pub const ASYNC = 0o20000;
-    pub const DIRECT = 0o40000;
-    pub const LARGEFILE = 0;
-    pub const NOATIME = 0o1000000;
-    pub const PATH = 0o10000000;
-    pub const TMPFILE = 0o20200000;
-    pub const NDELAY = NONBLOCK;
-};
-
 pub const F = struct {
     pub const DUPFD = 0;
     pub const GETFD = 1;
@@ -175,21 +174,6 @@ pub const F = struct {
     pub const RDLCK = 0;
     pub const WRLCK = 1;
     pub const UNLCK = 2;
-};
-
-pub const MAP = struct {
-    /// only give out 32bit addresses
-    pub const @"32BIT" = 0x40;
-    /// stack-like segment
-    pub const GROWSDOWN = 0x0100;
-    /// ETXTBSY
-    pub const DENYWRITE = 0x0800;
-    /// mark it as an executable
-    pub const EXECUTABLE = 0x1000;
-    /// pages are locked
-    pub const LOCKED = 0x2000;
-    /// don't check for reservations
-    pub const NORESERVE = 0x4000;
 };
 
 pub const VDSO = struct {
@@ -231,13 +215,6 @@ pub const REG = struct {
     pub const TRAPNO = 20;
     pub const OLDMASK = 21;
     pub const CR2 = 22;
-};
-
-pub const LOCK = struct {
-    pub const SH = 1;
-    pub const EX = 2;
-    pub const NB = 4;
-    pub const UN = 8;
 };
 
 pub const Flock = extern struct {
@@ -310,13 +287,13 @@ pub const Stat = extern struct {
 };
 
 pub const timeval = extern struct {
-    tv_sec: isize,
-    tv_usec: isize,
+    sec: isize,
+    usec: isize,
 };
 
 pub const timezone = extern struct {
-    tz_minuteswest: i32,
-    tz_dsttime: i32,
+    minuteswest: i32,
+    dsttime: i32,
 };
 
 pub const Elf_Symndx = u32;
@@ -431,11 +408,11 @@ fn getContextInternal() callconv(.Naked) usize {
         \\ leaq %[stack_offset:c](%%rdi), %%rsi
         \\ movq %%rdi, %%r8
         \\ xorl %%edi, %%edi
-        \\ movq %[sigaltstack], %%rax
+        \\ movl %[sigaltstack], %%eax
         \\ syscall
         \\ testq %%rax, %%rax
         \\ jnz 0f
-        \\ movq %[sigprocmask], %%rax
+        \\ movl %[sigprocmask], %%eax
         \\ xorl %%esi, %%esi
         \\ leaq %[sigmask_offset:c](%%r8), %%rdx
         \\ movl %[sigset_size], %%r10d

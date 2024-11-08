@@ -9,7 +9,7 @@ noinline fn frame4(expected: *[5]usize, unwound: *[5]usize) void {
     var context: debug.ThreadContext = undefined;
     testing.expect(debug.getContext(&context)) catch @panic("failed to getContext");
 
-    var debug_info = debug.getSelfDebugInfo() catch @panic("failed to openSelfDebugInfo");
+    const debug_info = debug.getSelfDebugInfo() catch @panic("failed to openSelfDebugInfo");
     var it = debug.StackIterator.initWithContext(expected[0], debug_info, &context) catch @panic("failed to initWithContext");
     defer it.deinit();
 
@@ -37,6 +37,7 @@ extern fn frame0(
 pub fn main() !void {
     // Disabled until the DWARF unwinder bugs on .aarch64 are solved
     if (builtin.omit_frame_pointer and comptime builtin.target.isDarwin() and builtin.cpu.arch == .aarch64) return;
+    if (builtin.target.isDarwin() and builtin.cpu.arch == .x86_64) return; // https://github.com/ziglang/zig/issues/21337
 
     if (!std.debug.have_ucontext or !std.debug.have_getcontext) return;
 

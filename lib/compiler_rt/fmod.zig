@@ -9,15 +9,15 @@ const normalize = common.normalize;
 pub const panic = common.panic;
 
 comptime {
-    @export(__fmodh, .{ .name = "__fmodh", .linkage = common.linkage, .visibility = common.visibility });
-    @export(fmodf, .{ .name = "fmodf", .linkage = common.linkage, .visibility = common.visibility });
-    @export(fmod, .{ .name = "fmod", .linkage = common.linkage, .visibility = common.visibility });
-    @export(__fmodx, .{ .name = "__fmodx", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&__fmodh, .{ .name = "__fmodh", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&fmodf, .{ .name = "fmodf", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&fmod, .{ .name = "fmod", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&__fmodx, .{ .name = "__fmodx", .linkage = common.linkage, .visibility = common.visibility });
     if (common.want_ppc_abi) {
-        @export(fmodq, .{ .name = "fmodf128", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&fmodq, .{ .name = "fmodf128", .linkage = common.linkage, .visibility = common.visibility });
     }
-    @export(fmodq, .{ .name = "fmodq", .linkage = common.linkage, .visibility = common.visibility });
-    @export(fmodl, .{ .name = "fmodl", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&fmodq, .{ .name = "fmodq", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&fmodl, .{ .name = "fmodl", .linkage = common.linkage, .visibility = common.visibility });
 }
 
 pub fn __fmodh(x: f16, y: f16) callconv(.C) f16 {
@@ -58,7 +58,7 @@ pub fn __fmodx(a: f80, b: f80) callconv(.C) f80 {
     //   - fmodx(val, NaN)
     //   - fmodx(inf, val)
     // The sign on checked values does not matter.
-    // Doing (a * b) / (a * b) procudes undefined results
+    // Doing (a * b) / (a * b) produces undefined results
     // because the three cases always produce undefined calculations:
     //   - 0 / 0
     //   - val * NaN
@@ -81,13 +81,13 @@ pub fn __fmodx(a: f80, b: f80) callconv(.C) f80 {
     if (expB == 0) expB = normalize(f80, &bRep);
 
     var highA: u64 = 0;
-    var highB: u64 = 0;
+    const highB: u64 = 0;
     var lowA: u64 = @truncate(aRep);
-    var lowB: u64 = @truncate(bRep);
+    const lowB: u64 = @truncate(bRep);
 
     while (expA > expB) : (expA -= 1) {
         var high = highA -% highB;
-        var low = lowA -% lowB;
+        const low = lowA -% lowB;
         if (lowA < lowB) {
             high -%= 1;
         }
@@ -104,7 +104,7 @@ pub fn __fmodx(a: f80, b: f80) callconv(.C) f80 {
     }
 
     var high = highA -% highB;
-    var low = lowA -% lowB;
+    const low = lowA -% lowB;
     if (lowA < lowB) {
         high -%= 1;
     }
@@ -142,16 +142,16 @@ pub fn fmodq(a: f128, b: f128) callconv(.C) f128 {
     const bPtr_u16: [*]u16 = @ptrCast(&bmod);
 
     const exp_and_sign_index = comptime switch (builtin.target.cpu.arch.endian()) {
-        .Little => 7,
-        .Big => 0,
+        .little => 7,
+        .big => 0,
     };
     const low_index = comptime switch (builtin.target.cpu.arch.endian()) {
-        .Little => 0,
-        .Big => 1,
+        .little => 0,
+        .big => 1,
     };
     const high_index = comptime switch (builtin.target.cpu.arch.endian()) {
-        .Little => 1,
-        .Big => 0,
+        .little => 1,
+        .big => 0,
     };
 
     const signA = aPtr_u16[exp_and_sign_index] & 0x8000;
@@ -163,7 +163,7 @@ pub fn fmodq(a: f128, b: f128) callconv(.C) f128 {
     //   - fmodq(val, NaN)
     //   - fmodq(inf, val)
     // The sign on checked values does not matter.
-    // Doing (a * b) / (a * b) procudes undefined results
+    // Doing (a * b) / (a * b) produces undefined results
     // because the three cases always produce undefined calculations:
     //   - 0 / 0
     //   - val * NaN
@@ -194,13 +194,13 @@ pub fn fmodq(a: f128, b: f128) callconv(.C) f128 {
 
     // OR in extra non-stored mantissa digit
     var highA: u64 = (aPtr_u64[high_index] & (std.math.maxInt(u64) >> 16)) | 1 << 48;
-    var highB: u64 = (bPtr_u64[high_index] & (std.math.maxInt(u64) >> 16)) | 1 << 48;
+    const highB: u64 = (bPtr_u64[high_index] & (std.math.maxInt(u64) >> 16)) | 1 << 48;
     var lowA: u64 = aPtr_u64[low_index];
-    var lowB: u64 = bPtr_u64[low_index];
+    const lowB: u64 = bPtr_u64[low_index];
 
     while (expA > expB) : (expA -= 1) {
         var high = highA -% highB;
-        var low = lowA -% lowB;
+        const low = lowA -% lowB;
         if (lowA < lowB) {
             high -%= 1;
         }
@@ -217,7 +217,7 @@ pub fn fmodq(a: f128, b: f128) callconv(.C) f128 {
     }
 
     var high = highA -% highB;
-    var low = lowA -% lowB;
+    const low = lowA -% lowB;
     if (lowA < lowB) {
         high -= 1;
     }
@@ -239,7 +239,7 @@ pub fn fmodq(a: f128, b: f128) callconv(.C) f128 {
     aPtr_u64[high_index] = highA;
     aPtr_u64[low_index] = lowA;
 
-    // Combine the exponent with the sign, normalize if happend to be denormalized
+    // Combine the exponent with the sign, normalize if happened to be denormalized
     if (expA <= 0) {
         aPtr_u16[exp_and_sign_index] = @as(u16, @truncate(@as(u32, @bitCast((expA +% 120))))) | signA;
         amod *= 0x1p-120;
@@ -251,7 +251,7 @@ pub fn fmodq(a: f128, b: f128) callconv(.C) f128 {
 }
 
 pub fn fmodl(a: c_longdouble, b: c_longdouble) callconv(.C) c_longdouble {
-    switch (@typeInfo(c_longdouble).Float.bits) {
+    switch (@typeInfo(c_longdouble).float.bits) {
         16 => return __fmodh(a, b),
         32 => return fmodf(a, b),
         64 => return fmod(a, b),
@@ -262,7 +262,7 @@ pub fn fmodl(a: c_longdouble, b: c_longdouble) callconv(.C) c_longdouble {
 }
 
 inline fn generic_fmod(comptime T: type, x: T, y: T) T {
-    const bits = @typeInfo(T).Float.bits;
+    const bits = @typeInfo(T).float.bits;
     const uint = std.meta.Int(.unsigned, bits);
     comptime assert(T == f32 or T == f64);
     const digits = if (T == f32) 23 else 52;

@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const mem = std.mem;
 const expectEqual = std.testing.expectEqual;
+const native_endian = builtin.cpu.arch.endian();
 
 const rotl = std.math.rotl;
 
@@ -53,10 +54,10 @@ pub const XxHash64 = struct {
         }
 
         fn processStripe(self: *Accumulator, buf: *const [32]u8) void {
-            self.acc1 = round(self.acc1, mem.readIntLittle(u64, buf[0..8]));
-            self.acc2 = round(self.acc2, mem.readIntLittle(u64, buf[8..16]));
-            self.acc3 = round(self.acc3, mem.readIntLittle(u64, buf[16..24]));
-            self.acc4 = round(self.acc4, mem.readIntLittle(u64, buf[24..32]));
+            self.acc1 = round(self.acc1, mem.readInt(u64, buf[0..8], .little));
+            self.acc2 = round(self.acc2, mem.readInt(u64, buf[8..16], .little));
+            self.acc3 = round(self.acc3, mem.readInt(u64, buf[16..24], .little));
+            self.acc4 = round(self.acc4, mem.readInt(u64, buf[24..32], .little));
         }
 
         fn merge(self: Accumulator) u64 {
@@ -139,7 +140,7 @@ pub const XxHash64 = struct {
 
     fn finalize8(v: u64, bytes: *const [8]u8) u64 {
         var acc = v;
-        const lane = mem.readIntLittle(u64, bytes);
+        const lane = mem.readInt(u64, bytes, .little);
         acc ^= round(0, lane);
         acc = rotl(u64, acc, 27) *% prime_1;
         acc +%= prime_4;
@@ -148,7 +149,7 @@ pub const XxHash64 = struct {
 
     fn finalize4(v: u64, bytes: *const [4]u8) u64 {
         var acc = v;
-        const lane = @as(u64, mem.readIntLittle(u32, bytes));
+        const lane = @as(u64, mem.readInt(u32, bytes, .little));
         acc ^= lane *% prime_1;
         acc = rotl(u64, acc, 23) *% prime_2;
         acc +%= prime_3;
@@ -184,8 +185,6 @@ pub const XxHash64 = struct {
     }
 
     pub fn update(self: *XxHash64, input: anytype) void {
-        validateType(@TypeOf(input));
-
         if (input.len < 32 - self.buf_len) {
             @memcpy(self.buf[self.buf_len..][0..input.len], input);
             self.buf_len += input.len;
@@ -231,8 +230,6 @@ pub const XxHash64 = struct {
     };
 
     pub fn hash(seed: u64, input: anytype) u64 {
-        validateType(@TypeOf(input));
-
         if (input.len < 32) {
             return finalize(seed +% prime_5, 0, input);
         } else {
@@ -291,10 +288,10 @@ pub const XxHash32 = struct {
         }
 
         fn processStripe(self: *Accumulator, buf: *const [16]u8) void {
-            self.acc1 = round(self.acc1, mem.readIntLittle(u32, buf[0..4]));
-            self.acc2 = round(self.acc2, mem.readIntLittle(u32, buf[4..8]));
-            self.acc3 = round(self.acc3, mem.readIntLittle(u32, buf[8..12]));
-            self.acc4 = round(self.acc4, mem.readIntLittle(u32, buf[12..16]));
+            self.acc1 = round(self.acc1, mem.readInt(u32, buf[0..4], .little));
+            self.acc2 = round(self.acc2, mem.readInt(u32, buf[4..8], .little));
+            self.acc3 = round(self.acc3, mem.readInt(u32, buf[8..12], .little));
+            self.acc4 = round(self.acc4, mem.readInt(u32, buf[12..16], .little));
         }
 
         fn merge(self: Accumulator) u32 {
@@ -314,8 +311,6 @@ pub const XxHash32 = struct {
     }
 
     pub fn update(self: *XxHash32, input: []const u8) void {
-        validateType(@TypeOf(input));
-
         if (input.len < 16 - self.buf_len) {
             @memcpy(self.buf[self.buf_len..][0..input.len], input);
             self.buf_len += input.len;
@@ -390,7 +385,7 @@ pub const XxHash32 = struct {
 
     fn finalize4(v: u32, bytes: *const [4]u8) u32 {
         var acc = v;
-        const lane = mem.readIntLittle(u32, bytes);
+        const lane = mem.readInt(u32, bytes, .little);
         acc +%= lane *% prime_3;
         acc = rotl(u32, acc, 17) *% prime_4;
         return acc;
@@ -415,8 +410,6 @@ pub const XxHash32 = struct {
     }
 
     pub fn hash(seed: u32, input: anytype) u32 {
-        validateType(@TypeOf(input));
-
         if (input.len < 16) {
             return finalize(seed +% prime_5, 0, input);
         } else {
@@ -472,7 +465,7 @@ pub const XxHash3 = struct {
     }
 
     inline fn swap(x: anytype) @TypeOf(x) {
-        return if (builtin.cpu.arch.endian() == .Big) @byteSwap(x) else x;
+        return if (native_endian == .big) @byteSwap(x) else x;
     }
 
     inline fn disableAutoVectorization(x: anytype) void {
@@ -586,8 +579,6 @@ pub const XxHash3 = struct {
     // Public API - Oneshot
 
     pub fn hash(seed: u64, input: anytype) u64 {
-        validateType(@TypeOf(input));
-
         const secret = &default_secret;
         if (input.len > 240) return hashLong(seed, input);
         if (input.len > 128) return hash240(seed, input, secret);
@@ -602,7 +593,7 @@ pub const XxHash3 = struct {
     }
 
     fn hash3(seed: u64, input: anytype, noalias secret: *const [192]u8) u64 {
-        @setCold(true);
+        @branchHint(.cold);
         std.debug.assert(input.len > 0 and input.len < 4);
 
         const flip: [2]u32 = @bitCast(secret[0..8].*);
@@ -618,7 +609,7 @@ pub const XxHash3 = struct {
     }
 
     fn hash8(seed: u64, input: anytype, noalias secret: *const [192]u8) u64 {
-        @setCold(true);
+        @branchHint(.cold);
         std.debug.assert(input.len >= 4 and input.len <= 8);
 
         const flip: [2]u64 = @bitCast(secret[8..24].*);
@@ -634,7 +625,7 @@ pub const XxHash3 = struct {
     }
 
     fn hash16(seed: u64, input: anytype, noalias secret: *const [192]u8) u64 {
-        @setCold(true);
+        @branchHint(.cold);
         std.debug.assert(input.len > 8 and input.len <= 16);
 
         const flip: [4]u64 = @bitCast(secret[24..56].*);
@@ -650,7 +641,7 @@ pub const XxHash3 = struct {
     }
 
     fn hash128(seed: u64, input: anytype, noalias secret: *const [192]u8) u64 {
-        @setCold(true);
+        @branchHint(.cold);
         std.debug.assert(input.len > 16 and input.len <= 128);
 
         var acc = XxHash64.prime_1 *% @as(u64, input.len);
@@ -666,7 +657,7 @@ pub const XxHash3 = struct {
     }
 
     fn hash240(seed: u64, input: anytype, noalias secret: *const [192]u8) u64 {
-        @setCold(true);
+        @branchHint(.cold);
         std.debug.assert(input.len > 128 and input.len <= 240);
 
         var acc = XxHash64.prime_1 *% @as(u64, input.len);
@@ -685,7 +676,7 @@ pub const XxHash3 = struct {
     }
 
     noinline fn hashLong(seed: u64, input: []const u8) u64 {
-        @setCold(true);
+        @branchHint(.cold);
         std.debug.assert(input.len >= 240);
 
         const block_count = ((input.len - 1) / @sizeOf(Block)) * @sizeOf(Block);
@@ -708,8 +699,6 @@ pub const XxHash3 = struct {
     }
 
     pub fn update(self: *XxHash3, input: anytype) void {
-        validateType(@TypeOf(input));
-
         self.total_len += input.len;
         std.debug.assert(self.buffered <= self.buffer.len);
 
@@ -782,18 +771,6 @@ pub const XxHash3 = struct {
 
 const verify = @import("verify.zig");
 
-fn validateType(comptime T: type) void {
-    comptime {
-        if (!((std.meta.trait.isSlice(T) or
-            std.meta.trait.is(.Array)(T) or
-            std.meta.trait.isPtrTo(.Array)(T)) and
-            std.meta.Elem(T) == u8))
-        {
-            @compileError("expect a slice, array or pointer to array of u8, got " ++ @typeName(T));
-        }
-    }
-}
-
 fn testExpect(comptime H: type, seed: anytype, input: []const u8, expected: u64) !void {
     try expectEqual(expected, H.hash(seed, input));
 
@@ -803,6 +780,8 @@ fn testExpect(comptime H: type, seed: anytype, input: []const u8, expected: u64)
 }
 
 test "xxhash3" {
+    if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest;
+
     const H = XxHash3;
     // Non-Seeded Tests
     try testExpect(H, 0, "", 0x2d06800538d394c2);
@@ -834,6 +813,8 @@ test "xxhash3" {
 }
 
 test "xxhash3 smhasher" {
+    if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest;
+
     const Test = struct {
         fn do() !void {
             try expectEqual(verify.smhasher(XxHash3.hash), 0x9a636405);
@@ -845,6 +826,8 @@ test "xxhash3 smhasher" {
 }
 
 test "xxhash3 iterative api" {
+    if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest;
+
     const Test = struct {
         fn do() !void {
             try verify.iterativeApi(XxHash3);
@@ -907,7 +890,7 @@ test "xxhash32 smhasher" {
         }
     };
     try Test.do();
-    @setEvalBranchQuota(75000);
+    @setEvalBranchQuota(85000);
     comptime try Test.do();
 }
 

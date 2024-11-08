@@ -1,7 +1,6 @@
 const Foo = @Type(.{
-    .Fn = .{
+    .@"fn" = .{
         .calling_convention = .Unspecified,
-        .alignment = 0,
         .is_generic = false,
         .is_var_args = true,
         .return_type = u0,
@@ -13,8 +12,7 @@ comptime {
 }
 
 // error
-// backend=stage2
-// target=native
+// target=x86_64-linux
 //
-// :1:13: error: variadic function does not support '.Unspecified' calling convention
-// :1:13: note: supported calling conventions: '.C'
+// :1:13: error: variadic function does not support 'auto' calling convention
+// :1:13: note: supported calling conventions: 'x86_64_sysv', 'x86_64_win'

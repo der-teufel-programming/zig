@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const math = std.math;
 const mem = std.mem;
-const utils = std.crypto.utils;
 
 const Precomp = u128;
 
@@ -13,7 +12,7 @@ const Precomp = u128;
 /// It is not a general purpose hash function - The key must be secret, unpredictable and never reused.
 ///
 /// GHASH is typically used to compute the authentication tag in the AES-GCM construction.
-pub const Ghash = Hash(.Big, true);
+pub const Ghash = Hash(.big, true);
 
 /// POLYVAL is a universal hash function that uses multiplication by a fixed
 /// parameter within a Galois field.
@@ -21,7 +20,7 @@ pub const Ghash = Hash(.Big, true);
 /// It is not a general purpose hash function - The key must be secret, unpredictable and never reused.
 ///
 /// POLYVAL is typically used to compute the authentication tag in the AES-GCM-SIV construction.
-pub const Polyval = Hash(.Little, false);
+pub const Polyval = Hash(.little, false);
 
 fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
     return struct {
@@ -158,11 +157,7 @@ fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
         /// clmulSoft128_64 is faster on platforms with no native 128-bit registers.
         const clmulSoft = switch (builtin.cpu.arch) {
             .wasm32, .wasm64 => clmulSoft128_64,
-            else => impl: {
-                const vector_size = std.simd.suggestVectorSize(u128) orelse 0;
-                if (vector_size < 128) break :impl clmulSoft128_64;
-                break :impl clmulSoft128;
-            },
+            else => if (std.simd.suggestVectorLength(u128) != null) clmulSoft128 else clmulSoft128_64,
         };
 
         // Software carryless multiplication of two 64-bit integers using native 128-bit registers.
@@ -407,7 +402,7 @@ fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
             st.pad();
             mem.writeInt(u128, out[0..16], st.acc, endian);
 
-            utils.secureZero(u8, @as([*]u8, @ptrCast(st))[0..@sizeOf(Self)]);
+            std.crypto.secureZero(u8, @as([*]u8, @ptrCast(st))[0..@sizeOf(Self)]);
         }
 
         /// Compute the GHASH of a message.

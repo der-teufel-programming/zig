@@ -17,26 +17,27 @@ pub fn BufferedReader(comptime buffer_size: usize, comptime ReaderType: type) ty
         const Self = @This();
 
         pub fn read(self: *Self, dest: []u8) Error!usize {
-            var dest_index: usize = 0;
-
-            while (dest_index < dest.len) {
-                const written = @min(dest.len - dest_index, self.end - self.start);
-                @memcpy(dest[dest_index..][0..written], self.buf[self.start..][0..written]);
-                if (written == 0) {
-                    // buf empty, fill it
-                    const n = try self.unbuffered_reader.read(self.buf[0..]);
-                    if (n == 0) {
-                        // reading from the unbuffered stream returned nothing
-                        // so we have nothing left to read.
-                        return dest_index;
-                    }
-                    self.start = 0;
-                    self.end = n;
-                }
-                self.start += written;
-                dest_index += written;
+            // First try reading from the already buffered data onto the destination.
+            const current = self.buf[self.start..self.end];
+            if (current.len != 0) {
+                const to_transfer = @min(current.len, dest.len);
+                @memcpy(dest[0..to_transfer], current[0..to_transfer]);
+                self.start += to_transfer;
+                return to_transfer;
             }
-            return dest.len;
+
+            // If dest is large, read from the unbuffered reader directly into the destination.
+            if (dest.len >= buffer_size) {
+                return self.unbuffered_reader.read(dest);
+            }
+
+            // If dest is small, read from the unbuffered reader into our own internal buffer,
+            // and then transfer to destination.
+            self.end = try self.unbuffered_reader.read(&self.buf);
+            const to_transfer = @min(self.end, dest.len);
+            @memcpy(dest[0..to_transfer], self.buf[0..to_transfer]);
+            self.start = to_transfer;
+            return to_transfer;
         }
 
         pub fn reader(self: *Self) Reader {
@@ -53,7 +54,7 @@ pub fn bufferedReaderSize(comptime size: usize, reader: anytype) BufferedReader(
     return .{ .unbuffered_reader = reader };
 }
 
-test "io.BufferedReader OneByte" {
+test "OneByte" {
     const OneByteReadReader = struct {
         str: []const u8,
         curr: usize,
@@ -96,7 +97,7 @@ test "io.BufferedReader OneByte" {
 fn smallBufferedReader(underlying_stream: anytype) BufferedReader(8, @TypeOf(underlying_stream)) {
     return .{ .unbuffered_reader = underlying_stream };
 }
-test "io.BufferedReader Block" {
+test "Block" {
     const BlockReader = struct {
         block: []const u8,
         reads_allowed: usize,
@@ -131,60 +132,70 @@ test "io.BufferedReader Block" {
 
     // len out == block
     {
-        var block_reader = BlockReader.init(block, 2);
-        var test_buf_reader = BufferedReader(4, BlockReader){ .unbuffered_reader = block_reader };
+        var test_buf_reader: BufferedReader(4, BlockReader) = .{
+            .unbuffered_reader = BlockReader.init(block, 2),
+        };
+        const reader = test_buf_reader.reader();
         var out_buf: [4]u8 = undefined;
-        _ = try test_buf_reader.read(&out_buf);
+        _ = try reader.readAll(&out_buf);
         try testing.expectEqualSlices(u8, &out_buf, block);
-        _ = try test_buf_reader.read(&out_buf);
+        _ = try reader.readAll(&out_buf);
         try testing.expectEqualSlices(u8, &out_buf, block);
-        try testing.expectEqual(try test_buf_reader.read(&out_buf), 0);
+        try testing.expectEqual(try reader.readAll(&out_buf), 0);
     }
 
     // len out < block
     {
-        var block_reader = BlockReader.init(block, 2);
-        var test_buf_reader = BufferedReader(4, BlockReader){ .unbuffered_reader = block_reader };
+        var test_buf_reader: BufferedReader(4, BlockReader) = .{
+            .unbuffered_reader = BlockReader.init(block, 2),
+        };
+        const reader = test_buf_reader.reader();
         var out_buf: [3]u8 = undefined;
-        _ = try test_buf_reader.read(&out_buf);
+        _ = try reader.readAll(&out_buf);
         try testing.expectEqualSlices(u8, &out_buf, "012");
-        _ = try test_buf_reader.read(&out_buf);
+        _ = try reader.readAll(&out_buf);
         try testing.expectEqualSlices(u8, &out_buf, "301");
-        const n = try test_buf_reader.read(&out_buf);
+        const n = try reader.readAll(&out_buf);
         try testing.expectEqualSlices(u8, out_buf[0..n], "23");
-        try testing.expectEqual(try test_buf_reader.read(&out_buf), 0);
+        try testing.expectEqual(try reader.readAll(&out_buf), 0);
     }
 
     // len out > block
     {
-        var block_reader = BlockReader.init(block, 2);
-        var test_buf_reader = BufferedReader(4, BlockReader){ .unbuffered_reader = block_reader };
+        var test_buf_reader: BufferedReader(4, BlockReader) = .{
+            .unbuffered_reader = BlockReader.init(block, 2),
+        };
+        const reader = test_buf_reader.reader();
         var out_buf: [5]u8 = undefined;
-        _ = try test_buf_reader.read(&out_buf);
+        _ = try reader.readAll(&out_buf);
         try testing.expectEqualSlices(u8, &out_buf, "01230");
-        const n = try test_buf_reader.read(&out_buf);
+        const n = try reader.readAll(&out_buf);
         try testing.expectEqualSlices(u8, out_buf[0..n], "123");
-        try testing.expectEqual(try test_buf_reader.read(&out_buf), 0);
+        try testing.expectEqual(try reader.readAll(&out_buf), 0);
     }
 
     // len out == 0
     {
-        var block_reader = BlockReader.init(block, 2);
-        var test_buf_reader = BufferedReader(4, BlockReader){ .unbuffered_reader = block_reader };
+        var test_buf_reader: BufferedReader(4, BlockReader) = .{
+            .unbuffered_reader = BlockReader.init(block, 2),
+        };
+        const reader = test_buf_reader.reader();
         var out_buf: [0]u8 = undefined;
-        _ = try test_buf_reader.read(&out_buf);
+        _ = try reader.readAll(&out_buf);
         try testing.expectEqualSlices(u8, &out_buf, "");
     }
 
     // len bufreader buf > block
     {
-        var block_reader = BlockReader.init(block, 2);
-        var test_buf_reader = BufferedReader(5, BlockReader){ .unbuffered_reader = block_reader };
+        var test_buf_reader: BufferedReader(5, BlockReader) = .{
+            .unbuffered_reader = BlockReader.init(block, 2),
+        };
+        const reader = test_buf_reader.reader();
         var out_buf: [4]u8 = undefined;
-        _ = try test_buf_reader.read(&out_buf);
+        _ = try reader.readAll(&out_buf);
         try testing.expectEqualSlices(u8, &out_buf, block);
-        _ = try test_buf_reader.read(&out_buf);
+        _ = try reader.readAll(&out_buf);
         try testing.expectEqualSlices(u8, &out_buf, block);
-        try testing.expectEqual(try test_buf_reader.read(&out_buf), 0);
+        try testing.expectEqual(try reader.readAll(&out_buf), 0);
     }
 }

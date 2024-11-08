@@ -165,7 +165,7 @@ pub fn addCases(cases: *tests.CompareOutputContext) void {
         \\const y : u16 = 5678;
         \\pub fn main() void {
         \\    var x_local : i32 = print_ok(x);
-        \\    _ = x_local;
+        \\    _ = &x_local;
         \\}
         \\fn print_ok(val: @TypeOf(x)) @TypeOf(foo) {
         \\    _ = val;
@@ -291,7 +291,7 @@ pub fn addCases(cases: *tests.CompareOutputContext) void {
         \\    stdout.print("before\n", .{}) catch unreachable;
         \\    defer stdout.print("defer1\n", .{}) catch unreachable;
         \\    defer stdout.print("defer2\n", .{}) catch unreachable;
-        \\    var gpa = @import("std").heap.GeneralPurposeAllocator(.{}){};
+        \\    var gpa: @import("std").heap.GeneralPurposeAllocator(.{}) = .init;
         \\    defer _ = gpa.deinit();
         \\    var arena = @import("std").heap.ArenaAllocator.init(gpa.allocator());
         \\    defer arena.deinit();
@@ -361,7 +361,7 @@ pub fn addCases(cases: *tests.CompareOutputContext) void {
             \\const os = std.os;
             \\
             \\pub fn main() !void {
-            \\    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+            \\    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
             \\    defer _ = gpa.deinit();
             \\    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
             \\    defer arena.deinit();
@@ -402,7 +402,7 @@ pub fn addCases(cases: *tests.CompareOutputContext) void {
             \\const os = std.os;
             \\
             \\pub fn main() !void {
-            \\    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+            \\    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
             \\    defer _ = gpa.deinit();
             \\    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
             \\    defer arena.deinit();
@@ -440,14 +440,14 @@ pub fn addCases(cases: *tests.CompareOutputContext) void {
     cases.add("std.log per scope log level override",
         \\const std = @import("std");
         \\
-        \\pub const std_options = struct {
-        \\    pub const log_level: std.log.Level = .debug;
+        \\pub const std_options: std.Options = .{
+        \\    .log_level = .debug,
         \\    
-        \\    pub const log_scope_levels = &[_]std.log.ScopeLevel{
+        \\    .log_scope_levels = &.{
         \\        .{ .scope = .a, .level = .warn },
         \\        .{ .scope = .c, .level = .err },
-        \\    };
-        \\    pub const logFn = log;
+        \\    },
+        \\    .logFn = log,
         \\};
         \\
         \\const loga = std.log.scoped(.a);
@@ -497,14 +497,14 @@ pub fn addCases(cases: *tests.CompareOutputContext) void {
     cases.add("std.heap.LoggingAllocator logs to std.log",
         \\const std = @import("std");
         \\
-        \\pub const std_options = struct {
-        \\    pub const log_level: std.log.Level = .debug;
-        \\    pub const logFn = log;
+        \\pub const std_options: std.Options = .{
+        \\    .log_level = .debug,
+        \\    .logFn = log,
         \\};
         \\
         \\pub fn main() !void {
         \\    var allocator_buf: [10]u8 = undefined;
-        \\    var fba = std.heap.FixedBufferAllocator.init(&allocator_buf);
+        \\    const fba = std.heap.FixedBufferAllocator.init(&allocator_buf);
         \\    var fba_wrapped = std.mem.validationWrap(fba);
         \\    var logging_allocator = std.heap.loggingAllocator(fba_wrapped.allocator());
         \\    const allocator = logging_allocator.allocator();

@@ -5,10 +5,7 @@ const io = std.io;
 const fs = std.fs;
 const fmt = std.fmt;
 const testing = std.testing;
-
 const Target = std.Target;
-const CrossTarget = std.zig.CrossTarget;
-
 const assert = std.debug.assert;
 
 const SparcCpuinfoImpl = struct {
@@ -74,6 +71,53 @@ test "cpuinfo: SPARC" {
     );
 }
 
+const RiscvCpuinfoImpl = struct {
+    model: ?*const Target.Cpu.Model = null,
+
+    const cpu_names = .{
+        .{ "sifive,u54", &Target.riscv.cpu.sifive_u54 },
+        .{ "sifive,u7", &Target.riscv.cpu.sifive_7_series },
+        .{ "sifive,u74", &Target.riscv.cpu.sifive_u74 },
+        .{ "sifive,u74-mc", &Target.riscv.cpu.sifive_u74 },
+    };
+
+    fn line_hook(self: *RiscvCpuinfoImpl, key: []const u8, value: []const u8) !bool {
+        if (mem.eql(u8, key, "uarch")) {
+            inline for (cpu_names) |pair| {
+                if (mem.eql(u8, value, pair[0])) {
+                    self.model = pair[1];
+                    break;
+                }
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    fn finalize(self: *const RiscvCpuinfoImpl, arch: Target.Cpu.Arch) ?Target.Cpu {
+        const model = self.model orelse return null;
+        return Target.Cpu{
+            .arch = arch,
+            .model = model,
+            .features = model.features,
+        };
+    }
+};
+
+const RiscvCpuinfoParser = CpuinfoParser(RiscvCpuinfoImpl);
+
+test "cpuinfo: RISC-V" {
+    try testParser(RiscvCpuinfoParser, .riscv64, &Target.riscv.cpu.sifive_u74,
+        \\processor : 0
+        \\hart      : 1
+        \\isa       : rv64imafdc
+        \\mmu       : sv39
+        \\isa-ext   :
+        \\uarch     : sifive,u74-mc
+    );
+}
+
 const PowerpcCpuinfoImpl = struct {
     model: ?*const Target.Cpu.Model = null,
 
@@ -133,16 +177,16 @@ const PowerpcCpuinfoParser = CpuinfoParser(PowerpcCpuinfoImpl);
 
 test "cpuinfo: PowerPC" {
     try testParser(PowerpcCpuinfoParser, .powerpc, &Target.powerpc.cpu.@"970",
-        \\processor	: 0
-        \\cpu		: PPC970MP, altivec supported
-        \\clock		: 1250.000000MHz
-        \\revision	: 1.1 (pvr 0044 0101)
+        \\processor : 0
+        \\cpu       : PPC970MP, altivec supported
+        \\clock     : 1250.000000MHz
+        \\revision  : 1.1 (pvr 0044 0101)
     );
     try testParser(PowerpcCpuinfoParser, .powerpc64le, &Target.powerpc.cpu.pwr8,
-        \\processor	: 0
-        \\cpu		: POWER8 (raw), altivec supported
-        \\clock		: 2926.000000MHz
-        \\revision	: 2.0 (pvr 004d 0200)
+        \\processor : 0
+        \\cpu       : POWER8 (raw), altivec supported
+        \\clock     : 2926.000000MHz
+        \\revision  : 2.0 (pvr 004d 0200)
     );
 }
 
@@ -220,7 +264,7 @@ const ArmCpuinfoImpl = struct {
         if (self.core_no == 0) return null;
 
         const is_64bit = switch (arch) {
-            .aarch64, .aarch64_be, .aarch64_32 => true,
+            .aarch64, .aarch64_be => true,
             else => false,
         };
 
@@ -260,25 +304,25 @@ test "cpuinfo: ARM" {
         \\CPU revision    : 7
     );
     try testParser(ArmCpuinfoParser, .arm, &Target.arm.cpu.cortex_a7,
-        \\processor	: 0
-        \\model name	: ARMv7 Processor rev 3 (v7l)
-        \\BogoMIPS	: 18.00
-        \\Features	: half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt vfpd32 lpae
-        \\CPU implementer	: 0x41
+        \\processor : 0
+        \\model name : ARMv7 Processor rev 3 (v7l)
+        \\BogoMIPS : 18.00
+        \\Features : half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt vfpd32 lpae
+        \\CPU implementer : 0x41
         \\CPU architecture: 7
-        \\CPU variant	: 0x0
-        \\CPU part	: 0xc07
-        \\CPU revision	: 3
+        \\CPU variant : 0x0
+        \\CPU part : 0xc07
+        \\CPU revision : 3
         \\
-        \\processor	: 4
-        \\model name	: ARMv7 Processor rev 3 (v7l)
-        \\BogoMIPS	: 90.00
-        \\Features	: half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt vfpd32 lpae
-        \\CPU implementer	: 0x41
+        \\processor : 4
+        \\model name : ARMv7 Processor rev 3 (v7l)
+        \\BogoMIPS : 90.00
+        \\Features : half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt vfpd32 lpae
+        \\CPU implementer : 0x41
         \\CPU architecture: 7
-        \\CPU variant	: 0x2
-        \\CPU part	: 0xc0f
-        \\CPU revision	: 3
+        \\CPU variant : 0x2
+        \\CPU part : 0xc0f
+        \\CPU revision : 3
     );
     try testParser(ArmCpuinfoParser, .aarch64, &Target.aarch64.cpu.cortex_a72,
         \\processor       : 0
@@ -330,22 +374,50 @@ fn CpuinfoParser(comptime impl: anytype) type {
     };
 }
 
+inline fn getAArch64CpuFeature(comptime feat_reg: []const u8) u64 {
+    return asm ("mrs %[ret], " ++ feat_reg
+        : [ret] "=r" (-> u64),
+    );
+}
+
 pub fn detectNativeCpuAndFeatures() ?Target.Cpu {
-    var f = fs.openFileAbsolute("/proc/cpuinfo", .{ .intended_io_mode = .blocking }) catch |err| switch (err) {
+    var f = fs.openFileAbsolute("/proc/cpuinfo", .{}) catch |err| switch (err) {
         else => return null,
     };
     defer f.close();
 
     const current_arch = builtin.cpu.arch;
     switch (current_arch) {
-        .arm, .armeb, .thumb, .thumbeb, .aarch64, .aarch64_be, .aarch64_32 => {
+        .arm, .armeb, .thumb, .thumbeb => {
             return ArmCpuinfoParser.parse(current_arch, f.reader()) catch null;
+        },
+        .aarch64, .aarch64_be => {
+            const registers = [12]u64{
+                getAArch64CpuFeature("MIDR_EL1"),
+                getAArch64CpuFeature("ID_AA64PFR0_EL1"),
+                getAArch64CpuFeature("ID_AA64PFR1_EL1"),
+                getAArch64CpuFeature("ID_AA64DFR0_EL1"),
+                getAArch64CpuFeature("ID_AA64DFR1_EL1"),
+                getAArch64CpuFeature("ID_AA64AFR0_EL1"),
+                getAArch64CpuFeature("ID_AA64AFR1_EL1"),
+                getAArch64CpuFeature("ID_AA64ISAR0_EL1"),
+                getAArch64CpuFeature("ID_AA64ISAR1_EL1"),
+                getAArch64CpuFeature("ID_AA64MMFR0_EL1"),
+                getAArch64CpuFeature("ID_AA64MMFR1_EL1"),
+                getAArch64CpuFeature("ID_AA64MMFR2_EL1"),
+            };
+
+            const core = @import("arm.zig").aarch64.detectNativeCpuAndFeatures(current_arch, registers);
+            return core;
         },
         .sparc64 => {
             return SparcCpuinfoParser.parse(current_arch, f.reader()) catch null;
         },
         .powerpc, .powerpcle, .powerpc64, .powerpc64le => {
             return PowerpcCpuinfoParser.parse(current_arch, f.reader()) catch null;
+        },
+        .riscv64, .riscv32 => {
+            return RiscvCpuinfoParser.parse(current_arch, f.reader()) catch null;
         },
         else => {},
     }

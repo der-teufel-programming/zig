@@ -1,13 +1,6 @@
-//! WriteFile is primarily used to create a directory in an appropriate
-//! location inside the local cache which has a set of files that have either
-//! been generated during the build, or are copied from the source package.
-//!
-//! However, this step has an additional capability of writing data to paths
-//! relative to the package root, effectively mutating the package's source
-//! files. Be careful with the latter functionality; it should not be used
-//! during the normal build process, but as a utility run by a developer with
-//! intention to update source files, which will then be committed to version
-//! control.
+//! WriteFile is used to create a directory in an appropriate location inside
+//! the local cache which has a set of files that have either been generated
+//! during the build, or are copied from the source package.
 const std = @import("std");
 const Step = std.Build.Step;
 const fs = std.fs;
@@ -15,30 +8,55 @@ const ArrayList = std.ArrayList;
 const WriteFile = @This();
 
 step: Step,
-/// The elements here are pointers because we need stable pointers for the
-/// GeneratedFile field.
-files: std.ArrayListUnmanaged(*File),
-output_source_files: std.ArrayListUnmanaged(OutputSourceFile),
+
+// The elements here are pointers because we need stable pointers for the GeneratedFile field.
+files: std.ArrayListUnmanaged(File),
+directories: std.ArrayListUnmanaged(Directory),
 generated_directory: std.Build.GeneratedFile,
 
-pub const base_id = .write_file;
+pub const base_id: Step.Id = .write_file;
 
 pub const File = struct {
-    generated_file: std.Build.GeneratedFile,
     sub_path: []const u8,
     contents: Contents,
-
-    /// deprecated: use `getPath`
-    pub const getFileSource = getPath;
-
-    pub fn getPath(self: *File) std.Build.LazyPath {
-        return .{ .generated = &self.generated_file };
-    }
 };
 
-pub const OutputSourceFile = struct {
-    contents: Contents,
+pub const Directory = struct {
+    source: std.Build.LazyPath,
     sub_path: []const u8,
+    options: Options,
+
+    pub const Options = struct {
+        /// File paths that end in any of these suffixes will be excluded from copying.
+        exclude_extensions: []const []const u8 = &.{},
+        /// Only file paths that end in any of these suffixes will be included in copying.
+        /// `null` means that all suffixes will be included.
+        /// `exclude_extensions` takes precedence over `include_extensions`.
+        include_extensions: ?[]const []const u8 = null,
+
+        pub fn dupe(opts: Options, b: *std.Build) Options {
+            return .{
+                .exclude_extensions = b.dupeStrings(opts.exclude_extensions),
+                .include_extensions = if (opts.include_extensions) |incs| b.dupeStrings(incs) else null,
+            };
+        }
+
+        pub fn pathIncluded(opts: Options, path: []const u8) bool {
+            for (opts.exclude_extensions) |ext| {
+                if (std.mem.endsWith(u8, path, ext))
+                    return false;
+            }
+            if (opts.include_extensions) |incs| {
+                for (incs) |inc| {
+                    if (std.mem.endsWith(u8, path, inc))
+                        return true;
+                } else {
+                    return false;
+                }
+            }
+            return true;
+        }
+    };
 };
 
 pub const Contents = union(enum) {
@@ -47,34 +65,42 @@ pub const Contents = union(enum) {
 };
 
 pub fn create(owner: *std.Build) *WriteFile {
+<<<<<<< HEAD
     std.debug.assert(owner.phase == .configure);
     const wf = owner.allocator.create(WriteFile) catch @panic("OOM");
     wf.* = .{
+=======
+    const write_file = owner.allocator.create(WriteFile) catch @panic("OOM");
+    write_file.* = .{
+>>>>>>> 54d0ba418375a4665cf1b4ee876d6c750bb9c079
         .step = Step.init(.{
-            .id = .write_file,
+            .id = base_id,
             .name = "WriteFile",
             .owner = owner,
             .makeFn = make,
         }),
         .files = .{},
-        .output_source_files = .{},
-        .generated_directory = .{ .step = &wf.step },
+        .directories = .{},
+        .generated_directory = .{ .step = &write_file.step },
     };
-    return wf;
+    return write_file;
 }
 
-pub fn add(wf: *WriteFile, sub_path: []const u8, bytes: []const u8) std.Build.LazyPath {
-    const b = wf.step.owner;
+pub fn add(write_file: *WriteFile, sub_path: []const u8, bytes: []const u8) std.Build.LazyPath {
+    const b = write_file.step.owner;
     const gpa = b.allocator;
-    const file = gpa.create(File) catch @panic("OOM");
-    file.* = .{
-        .generated_file = .{ .step = &wf.step },
+    const file = File{
         .sub_path = b.dupePath(sub_path),
         .contents = .{ .bytes = b.dupe(bytes) },
     };
-    wf.files.append(gpa, file) catch @panic("OOM");
-    wf.maybeUpdateName();
-    return file.getPath();
+    write_file.files.append(gpa, file) catch @panic("OOM");
+    write_file.maybeUpdateName();
+    return .{
+        .generated = .{
+            .file = &write_file.generated_directory,
+            .sub_path = file.sub_path,
+        },
+    };
 }
 
 /// Place the file into the generated directory within the local cache,
@@ -84,71 +110,77 @@ pub fn add(wf: *WriteFile, sub_path: []const u8, bytes: []const u8) std.Build.La
 /// include sub-directories, in which case this step will ensure the
 /// required sub-path exists.
 /// This is the option expected to be used most commonly with `addCopyFile`.
-pub fn addCopyFile(wf: *WriteFile, source: std.Build.LazyPath, sub_path: []const u8) std.Build.LazyPath {
-    const b = wf.step.owner;
+pub fn addCopyFile(write_file: *WriteFile, source: std.Build.LazyPath, sub_path: []const u8) std.Build.LazyPath {
+    const b = write_file.step.owner;
     const gpa = b.allocator;
-    const file = gpa.create(File) catch @panic("OOM");
-    file.* = .{
-        .generated_file = .{ .step = &wf.step },
+    const file = File{
         .sub_path = b.dupePath(sub_path),
         .contents = .{ .copy = source },
     };
-    wf.files.append(gpa, file) catch @panic("OOM");
+    write_file.files.append(gpa, file) catch @panic("OOM");
 
-    wf.maybeUpdateName();
-    source.addStepDependencies(&wf.step);
-    return file.getPath();
+    write_file.maybeUpdateName();
+    source.addStepDependencies(&write_file.step);
+    return .{
+        .generated = .{
+            .file = &write_file.generated_directory,
+            .sub_path = file.sub_path,
+        },
+    };
 }
 
-/// A path relative to the package root.
-/// Be careful with this because it updates source files. This should not be
-/// used as part of the normal build process, but as a utility occasionally
-/// run by a developer with intent to modify source files and then commit
-/// those changes to version control.
-pub fn addCopyFileToSource(wf: *WriteFile, source: std.Build.LazyPath, sub_path: []const u8) void {
-    const b = wf.step.owner;
-    wf.output_source_files.append(b.allocator, .{
-        .contents = .{ .copy = source },
-        .sub_path = sub_path,
-    }) catch @panic("OOM");
-    source.addStepDependencies(&wf.step);
+/// Copy files matching the specified exclude/include patterns to the specified subdirectory
+/// relative to this step's generated directory.
+/// The returned value is a lazy path to the generated subdirectory.
+pub fn addCopyDirectory(
+    write_file: *WriteFile,
+    source: std.Build.LazyPath,
+    sub_path: []const u8,
+    options: Directory.Options,
+) std.Build.LazyPath {
+    const b = write_file.step.owner;
+    const gpa = b.allocator;
+    const dir = Directory{
+        .source = source.dupe(b),
+        .sub_path = b.dupePath(sub_path),
+        .options = options.dupe(b),
+    };
+    write_file.directories.append(gpa, dir) catch @panic("OOM");
+
+    write_file.maybeUpdateName();
+    source.addStepDependencies(&write_file.step);
+    return .{
+        .generated = .{
+            .file = &write_file.generated_directory,
+            .sub_path = dir.sub_path,
+        },
+    };
 }
-
-/// A path relative to the package root.
-/// Be careful with this because it updates source files. This should not be
-/// used as part of the normal build process, but as a utility occasionally
-/// run by a developer with intent to modify source files and then commit
-/// those changes to version control.
-pub fn addBytesToSource(wf: *WriteFile, bytes: []const u8, sub_path: []const u8) void {
-    const b = wf.step.owner;
-    wf.output_source_files.append(b.allocator, .{
-        .contents = .{ .bytes = bytes },
-        .sub_path = sub_path,
-    }) catch @panic("OOM");
-}
-
-pub const getFileSource = @compileError("Deprecated; use the return value from add()/addCopyFile(), or use files[i].getPath()");
-
-pub const getDirectorySource = getDirectory;
 
 /// Returns a `LazyPath` representing the base directory that contains all the
 /// files from this `WriteFile`.
-pub fn getDirectory(wf: *WriteFile) std.Build.LazyPath {
-    return .{ .generated = &wf.generated_directory };
+pub fn getDirectory(write_file: *WriteFile) std.Build.LazyPath {
+    return .{ .generated = .{ .file = &write_file.generated_directory } };
 }
 
-fn maybeUpdateName(wf: *WriteFile) void {
-    if (wf.files.items.len == 1) {
+fn maybeUpdateName(write_file: *WriteFile) void {
+    if (write_file.files.items.len == 1 and write_file.directories.items.len == 0) {
         // First time adding a file; update name.
-        if (std.mem.eql(u8, wf.step.name, "WriteFile")) {
-            wf.step.name = wf.step.owner.fmt("WriteFile {s}", .{wf.files.items[0].sub_path});
+        if (std.mem.eql(u8, write_file.step.name, "WriteFile")) {
+            write_file.step.name = write_file.step.owner.fmt("WriteFile {s}", .{write_file.files.items[0].sub_path});
+        }
+    } else if (write_file.directories.items.len == 1 and write_file.files.items.len == 0) {
+        // First time adding a directory; update name.
+        if (std.mem.eql(u8, write_file.step.name, "WriteFile")) {
+            write_file.step.name = write_file.step.owner.fmt("WriteFile {s}", .{write_file.directories.items[0].sub_path});
         }
     }
 }
 
-fn make(step: *Step, prog_node: *std.Progress.Node) !void {
-    _ = prog_node;
+fn make(step: *Step, options: Step.MakeOptions) !void {
+    _ = options;
     const b = step.owner;
+<<<<<<< HEAD
     std.debug.assert(b.phase == .make);
     const wf = @fieldParentPtr(WriteFile, "step", step);
 
@@ -191,6 +223,12 @@ fn make(step: *Step, prog_node: *std.Progress.Node) !void {
             },
         }
     }
+=======
+    const arena = b.allocator;
+    const gpa = arena;
+    const write_file: *WriteFile = @fieldParentPtr("step", step);
+    step.clearWatchInputs();
+>>>>>>> 54d0ba418375a4665cf1b4ee876d6c750bb9c079
 
     // The cache is used here not really as a way to speed things up - because writing
     // the data to a file would probably be very fast - but as a way to find a canonical
@@ -199,41 +237,76 @@ fn make(step: *Step, prog_node: *std.Progress.Node) !void {
     // If, for example, a hard-coded path was used as the location to put WriteFile
     // files, then two WriteFiles executing in parallel might clobber each other.
 
-    var man = b.cache.obtain();
+    var man = b.graph.cache.obtain();
     defer man.deinit();
 
-    // Random bytes to make WriteFile unique. Refresh this with
-    // new random bytes when WriteFile implementation is modified
-    // in a non-backwards-compatible way.
-    man.hash.add(@as(u32, 0xd767ee59));
-
-    for (wf.files.items) |file| {
+    for (write_file.files.items) |file| {
         man.hash.addBytes(file.sub_path);
+
         switch (file.contents) {
             .bytes => |bytes| {
                 man.hash.addBytes(bytes);
             },
-            .copy => |file_source| {
-                _ = try man.addFile(file_source.getPath(b), null);
+            .copy => |lazy_path| {
+                const path = lazy_path.getPath3(b, step);
+                _ = try man.addFilePath(path, null);
+                try step.addWatchInput(lazy_path);
             },
+        }
+    }
+
+    const open_dir_cache = try arena.alloc(fs.Dir, write_file.directories.items.len);
+    var open_dirs_count: usize = 0;
+    defer closeDirs(open_dir_cache[0..open_dirs_count]);
+
+    for (write_file.directories.items, open_dir_cache) |dir, *open_dir_cache_elem| {
+        man.hash.addBytes(dir.sub_path);
+        for (dir.options.exclude_extensions) |ext| man.hash.addBytes(ext);
+        if (dir.options.include_extensions) |incs| for (incs) |inc| man.hash.addBytes(inc);
+
+        const need_derived_inputs = try step.addDirectoryWatchInput(dir.source);
+        const src_dir_path = dir.source.getPath3(b, step);
+
+        var src_dir = src_dir_path.root_dir.handle.openDir(src_dir_path.subPathOrDot(), .{ .iterate = true }) catch |err| {
+            return step.fail("unable to open source directory '{}': {s}", .{
+                src_dir_path, @errorName(err),
+            });
+        };
+        open_dir_cache_elem.* = src_dir;
+        open_dirs_count += 1;
+
+        var it = try src_dir.walk(gpa);
+        defer it.deinit();
+        while (try it.next()) |entry| {
+            if (!dir.options.pathIncluded(entry.path)) continue;
+
+            switch (entry.kind) {
+                .directory => {
+                    if (need_derived_inputs) {
+                        const entry_path = try src_dir_path.join(arena, entry.path);
+                        try step.addDirectoryWatchInputFromPath(entry_path);
+                    }
+                },
+                .file => {
+                    const entry_path = try src_dir_path.join(arena, entry.path);
+                    _ = try man.addFilePath(entry_path, null);
+                },
+                else => continue,
+            }
         }
     }
 
     if (try step.cacheHit(&man)) {
         const digest = man.final();
-        for (wf.files.items) |file| {
-            file.generated_file.path = try b.cache_root.join(b.allocator, &.{
-                "o", &digest, file.sub_path,
-            });
-        }
-        wf.generated_directory.path = try b.cache_root.join(b.allocator, &.{ "o", &digest });
+        write_file.generated_directory.path = try b.cache_root.join(arena, &.{ "o", &digest });
+        step.result_cached = true;
         return;
     }
 
     const digest = man.final();
     const cache_path = "o" ++ fs.path.sep_str ++ digest;
 
-    wf.generated_directory.path = try b.cache_root.join(b.allocator, &.{ "o", &digest });
+    write_file.generated_directory.path = try b.cache_root.join(arena, &.{ "o", &digest });
 
     var cache_dir = b.cache_root.handle.makeOpenPath(cache_path, .{}) catch |err| {
         return step.fail("unable to make path '{}{s}': {s}", .{
@@ -242,7 +315,9 @@ fn make(step: *Step, prog_node: *std.Progress.Node) !void {
     };
     defer cache_dir.close();
 
-    for (wf.files.items) |file| {
+    const cwd = fs.cwd();
+
+    for (write_file.files.items) |file| {
         if (fs.path.dirname(file.sub_path)) |dirname| {
             cache_dir.makePath(dirname) catch |err| {
                 return step.fail("unable to make path '{}{s}{c}{s}': {s}", .{
@@ -252,16 +327,16 @@ fn make(step: *Step, prog_node: *std.Progress.Node) !void {
         }
         switch (file.contents) {
             .bytes => |bytes| {
-                cache_dir.writeFile(file.sub_path, bytes) catch |err| {
+                cache_dir.writeFile(.{ .sub_path = file.sub_path, .data = bytes }) catch |err| {
                     return step.fail("unable to write file '{}{s}{c}{s}': {s}", .{
                         b.cache_root, cache_path, fs.path.sep, file.sub_path, @errorName(err),
                     });
                 };
             },
             .copy => |file_source| {
-                const source_path = file_source.getPath(b);
+                const source_path = file_source.getPath2(b, step);
                 const prev_status = fs.Dir.updateFile(
-                    fs.cwd(),
+                    cwd,
                     source_path,
                     cache_dir,
                     file.sub_path,
@@ -283,11 +358,51 @@ fn make(step: *Step, prog_node: *std.Progress.Node) !void {
                 _ = prev_status;
             },
         }
+    }
 
-        file.generated_file.path = try b.cache_root.join(b.allocator, &.{
-            cache_path, file.sub_path,
-        });
+    for (write_file.directories.items, open_dir_cache) |dir, already_open_dir| {
+        const src_dir_path = dir.source.getPath3(b, step);
+        const dest_dirname = dir.sub_path;
+
+        if (dest_dirname.len != 0) {
+            cache_dir.makePath(dest_dirname) catch |err| {
+                return step.fail("unable to make path '{}{s}{c}{s}': {s}", .{
+                    b.cache_root, cache_path, fs.path.sep, dest_dirname, @errorName(err),
+                });
+            };
+        }
+
+        var it = try already_open_dir.walk(gpa);
+        defer it.deinit();
+        while (try it.next()) |entry| {
+            if (!dir.options.pathIncluded(entry.path)) continue;
+
+            const src_entry_path = try src_dir_path.join(arena, entry.path);
+            const dest_path = b.pathJoin(&.{ dest_dirname, entry.path });
+            switch (entry.kind) {
+                .directory => try cache_dir.makePath(dest_path),
+                .file => {
+                    const prev_status = fs.Dir.updateFile(
+                        src_entry_path.root_dir.handle,
+                        src_entry_path.sub_path,
+                        cache_dir,
+                        dest_path,
+                        .{},
+                    ) catch |err| {
+                        return step.fail("unable to update file from '{}' to '{}{s}{c}{s}': {s}", .{
+                            src_entry_path, b.cache_root, cache_path, fs.path.sep, dest_path, @errorName(err),
+                        });
+                    };
+                    _ = prev_status;
+                },
+                else => continue,
+            }
+        }
     }
 
     try step.writeManifest(&man);
+}
+
+fn closeDirs(dirs: []fs.Dir) void {
+    for (dirs) |*d| d.close();
 }

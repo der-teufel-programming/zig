@@ -26,7 +26,7 @@ pub const fp_ilogbnan = minInt(i32);
 pub const fp_ilogb0 = minInt(i32);
 
 fn ilogbX(comptime T: type, x: T) i32 {
-    const typeWidth = @typeInfo(T).Float.bits;
+    const typeWidth = @typeInfo(T).float.bits;
     const significandBits = math.floatMantissaBits(T);
     const exponentBits = math.floatExponentBits(T);
 
@@ -38,8 +38,8 @@ fn ilogbX(comptime T: type, x: T) i32 {
 
     const absMask = signBit - 1;
 
-    var u = @as(Z, @bitCast(x)) & absMask;
-    var e = @as(i32, @intCast(u >> significandBits));
+    const u = @as(Z, @bitCast(x)) & absMask;
+    const e: i32 = @intCast(u >> significandBits);
 
     if (e == 0) {
         if (u == 0) {

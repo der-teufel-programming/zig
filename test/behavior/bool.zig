@@ -9,7 +9,7 @@ test "bool literals" {
 }
 
 test "cast bool to int" {
-    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const t = true;
     const f = false;
@@ -89,4 +89,13 @@ fn testShortCircuit(f: bool, t: bool) !void {
     try expect(hit_2);
     try expect(hit_3);
     try expect(hit_4);
+}
+
+test "or with noreturn operand" {
+    const S = struct {
+        fn foo(a: u32, b: u32) bool {
+            return a == 5 or b == 2 or @panic("oh no");
+        }
+    };
+    _ = S.foo(2, 2);
 }

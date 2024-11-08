@@ -1,4 +1,5 @@
 const std = @import("../../std.zig");
+const builtin = @import("builtin");
 const debug = std.debug;
 const math = std.math;
 const mem = std.mem;
@@ -134,9 +135,9 @@ pub const Rational = struct {
     /// completely represent the provided float.
     pub fn setFloat(self: *Rational, comptime T: type, f: T) !void {
         // Translated from golang.go/src/math/big/rat.go.
-        debug.assert(@typeInfo(T) == .Float);
+        debug.assert(@typeInfo(T) == .float);
 
-        const UnsignedInt = std.meta.Int(.unsigned, @typeInfo(T).Float.bits);
+        const UnsignedInt = std.meta.Int(.unsigned, @typeInfo(T).float.bits);
         const f_bits = @as(UnsignedInt, @bitCast(f));
 
         const exponent_bits = math.floatExponentBits(T);
@@ -192,9 +193,9 @@ pub const Rational = struct {
     pub fn toFloat(self: Rational, comptime T: type) !T {
         // Translated from golang.go/src/math/big/rat.go.
         // TODO: Indicate whether the result is not exact.
-        debug.assert(@typeInfo(T) == .Float);
+        debug.assert(@typeInfo(T) == .float);
 
-        const fsize = @typeInfo(T).Float.bits;
+        const fsize = @typeInfo(T).float.bits;
         const BitReprType = std.meta.Int(.unsigned, fsize);
 
         const msize = math.floatMantissaBits(T);
@@ -472,10 +473,10 @@ pub const Rational = struct {
 };
 
 fn extractLowBits(a: Int, comptime T: type) T {
-    debug.assert(@typeInfo(T) == .Int);
+    debug.assert(@typeInfo(T) == .int);
 
-    const t_bits = @typeInfo(T).Int.bits;
-    const limb_bits = @typeInfo(Limb).Int.bits;
+    const t_bits = @typeInfo(T).int.bits;
+    const limb_bits = @typeInfo(Limb).int.bits;
     if (t_bits <= limb_bits) {
         return @as(T, @truncate(a.limbs[0]));
     } else {
@@ -492,7 +493,7 @@ fn extractLowBits(a: Int, comptime T: type) T {
     }
 }
 
-test "big.rational extractLowBits" {
+test extractLowBits {
     var a = try Int.initSet(testing.allocator, 0x11112222333344441234567887654321);
     defer a.deinit();
 
@@ -512,7 +513,7 @@ test "big.rational extractLowBits" {
     try testing.expect(a5 == 0x11112222333344441234567887654321);
 }
 
-test "big.rational set" {
+test "set" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
 
@@ -541,7 +542,7 @@ test "big.rational set" {
     try testing.expect((try a.q.to(i32)) == 1);
 }
 
-test "big.rational setFloat" {
+test "setFloat" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
 
@@ -566,7 +567,7 @@ test "big.rational setFloat" {
     try testing.expect((try a.q.to(u128)) == 70368744177664);
 }
 
-test "big.rational setFloatString" {
+test "setFloatString" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
 
@@ -577,7 +578,7 @@ test "big.rational setFloatString" {
     try testing.expect((try a.q.to(u128)) == 100000000000000000000000000000000000);
 }
 
-test "big.rational toFloat" {
+test "toFloat" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
 
@@ -590,10 +591,10 @@ test "big.rational toFloat" {
     try testing.expect((try a.toFloat(f64)) == 72.141593120712409172417410926841290461290467124);
 }
 
-test "big.rational set/to Float round-trip" {
+test "set/to Float round-trip" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
-    var prng = std.rand.DefaultPrng.init(0x5EED);
+    var prng = std.Random.DefaultPrng.init(std.testing.random_seed);
     const random = prng.random();
     var i: usize = 0;
     while (i < 512) : (i += 1) {
@@ -603,7 +604,7 @@ test "big.rational set/to Float round-trip" {
     }
 }
 
-test "big.rational copy" {
+test "copy" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
 
@@ -633,7 +634,7 @@ test "big.rational copy" {
     try testing.expect((try a.q.to(u32)) == 1);
 }
 
-test "big.rational negate" {
+test "negate" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
 
@@ -650,7 +651,7 @@ test "big.rational negate" {
     try testing.expect((try a.q.to(i32)) == 1);
 }
 
-test "big.rational abs" {
+test "abs" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
 
@@ -667,7 +668,7 @@ test "big.rational abs" {
     try testing.expect((try a.q.to(i32)) == 1);
 }
 
-test "big.rational swap" {
+test "swap" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
     var b = try Rational.init(testing.allocator);
@@ -691,7 +692,7 @@ test "big.rational swap" {
     try testing.expect((try b.q.to(u32)) == 23);
 }
 
-test "big.rational order" {
+test "order" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
     var b = try Rational.init(testing.allocator);
@@ -706,7 +707,7 @@ test "big.rational order" {
     try testing.expect((try a.order(b)) == .eq);
 }
 
-test "big.rational order/orderAbs with negative" {
+test "order/orderAbs with negative" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
     var b = try Rational.init(testing.allocator);
@@ -718,7 +719,7 @@ test "big.rational order/orderAbs with negative" {
     try testing.expect((try a.orderAbs(b)) == .lt);
 }
 
-test "big.rational add single-limb" {
+test "add single-limb" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
     var b = try Rational.init(testing.allocator);
@@ -733,7 +734,7 @@ test "big.rational add single-limb" {
     try testing.expect((try a.order(b)) == .eq);
 }
 
-test "big.rational add" {
+test "add" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
     var b = try Rational.init(testing.allocator);
@@ -749,7 +750,7 @@ test "big.rational add" {
     try testing.expect((try a.order(r)) == .eq);
 }
 
-test "big.rational sub" {
+test "sub" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
     var b = try Rational.init(testing.allocator);
@@ -765,7 +766,7 @@ test "big.rational sub" {
     try testing.expect((try a.order(r)) == .eq);
 }
 
-test "big.rational mul" {
+test "mul" {
     var a = try Rational.init(testing.allocator);
     defer a.deinit();
     var b = try Rational.init(testing.allocator);
@@ -781,7 +782,7 @@ test "big.rational mul" {
     try testing.expect((try a.order(r)) == .eq);
 }
 
-test "big.rational div" {
+test "div" {
     {
         var a = try Rational.init(testing.allocator);
         defer a.deinit();

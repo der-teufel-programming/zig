@@ -8,15 +8,15 @@ pub fn build(b: *std.Build) void {
     // Building for the msvc abi requires a native MSVC installation
     if (builtin.os.tag != .windows or builtin.cpu.arch != .x86_64) return;
 
-    const target = .{
+    const target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
         .os_tag = .windows,
         .abi = .msvc,
-    };
+    });
     const optimize: std.builtin.OptimizeMode = .Debug;
     const obj = b.addObject(.{
         .name = "issue_5825",
-        .root_source_file = .{ .path = "main.zig" },
+        .root_source_file = b.path("main.zig"),
         .optimize = optimize,
         .target = target,
     });

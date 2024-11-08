@@ -9,10 +9,12 @@ test "@intCast i32 to u7" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     var x: u128 = maxInt(u128);
     var y: i32 = 120;
-    var z = x >> @as(u7, @intCast(y));
+    _ = .{ &x, &y };
+    const z = x >> @as(u7, @intCast(y));
     try expect(z == 0xff);
 }
 
@@ -23,20 +25,24 @@ test "coerce i8 to i32 and @intCast back" {
 
     var x: i8 = -5;
     var y: i32 = -5;
+    _ = .{ &x, &y };
     try expect(y == x);
 
     var x2: i32 = -5;
     var y2: i8 = -5;
+    _ = .{ &x2, &y2 };
     try expect(y2 == @as(i8, @intCast(x2)));
 }
 
 test "coerce non byte-sized integers accross 32bits boundary" {
     {
         var v: u21 = 6417;
+        _ = &v;
         const a: u32 = v;
         const b: u64 = v;
         const c: u64 = a;
         var w: u64 = 0x1234567812345678;
+        _ = &w;
         const d: u21 = @truncate(w);
         const e: u60 = d;
         try expectEqual(@as(u32, 6417), a);
@@ -48,10 +54,12 @@ test "coerce non byte-sized integers accross 32bits boundary" {
 
     {
         var v: u10 = 234;
+        _ = &v;
         const a: u32 = v;
         const b: u64 = v;
         const c: u64 = a;
         var w: u64 = 0x1234567812345678;
+        _ = &w;
         const d: u10 = @truncate(w);
         const e: u60 = d;
         try expectEqual(@as(u32, 234), a);
@@ -62,10 +70,12 @@ test "coerce non byte-sized integers accross 32bits boundary" {
     }
     {
         var v: u7 = 11;
+        _ = &v;
         const a: u32 = v;
         const b: u64 = v;
         const c: u64 = a;
         var w: u64 = 0x1234567812345678;
+        _ = &w;
         const d: u7 = @truncate(w);
         const e: u60 = d;
         try expectEqual(@as(u32, 11), a);
@@ -77,10 +87,12 @@ test "coerce non byte-sized integers accross 32bits boundary" {
 
     {
         var v: i21 = -6417;
+        _ = &v;
         const a: i32 = v;
         const b: i64 = v;
         const c: i64 = a;
         var w: i64 = -12345;
+        _ = &w;
         const d: i21 = @intCast(w);
         const e: i60 = d;
         try expectEqual(@as(i32, -6417), a);
@@ -92,10 +104,12 @@ test "coerce non byte-sized integers accross 32bits boundary" {
 
     {
         var v: i10 = -234;
+        _ = &v;
         const a: i32 = v;
         const b: i64 = v;
         const c: i64 = a;
         var w: i64 = -456;
+        _ = &w;
         const d: i10 = @intCast(w);
         const e: i60 = d;
         try expectEqual(@as(i32, -234), a);
@@ -106,10 +120,12 @@ test "coerce non byte-sized integers accross 32bits boundary" {
     }
     {
         var v: i7 = -11;
+        _ = &v;
         const a: i32 = v;
         const b: i64 = v;
         const c: i64 = a;
         var w: i64 = -42;
+        _ = &w;
         const d: i7 = @intCast(w);
         const e: i60 = d;
         try expectEqual(@as(i32, -11), a);
@@ -124,8 +140,8 @@ const Piece = packed struct {
     color: Color,
     type: Type,
 
-    const Type = enum { KING, QUEEN, BISHOP, KNIGHT, ROOK, PAWN };
-    const Color = enum { WHITE, BLACK };
+    const Type = enum(u3) { KING, QUEEN, BISHOP, KNIGHT, ROOK, PAWN };
+    const Color = enum(u1) { WHITE, BLACK };
 
     fn charToPiece(c: u8) !@This() {
         return .{
@@ -152,7 +168,7 @@ test "load non byte-sized optional value" {
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
     // note: this bug is triggered by the == operator, expectEqual will hide it
-    var opt: ?Piece = try Piece.charToPiece('p');
+    const opt: ?Piece = try Piece.charToPiece('p');
     try expect(opt.?.type == .PAWN);
     try expect(opt.?.color == .BLACK);
 
@@ -163,7 +179,7 @@ test "load non byte-sized optional value" {
 }
 
 test "load non byte-sized value in struct" {
-    if (builtin.cpu.arch.endian() != .Little) return error.SkipZigTest; // packed struct TODO
+    if (builtin.cpu.arch.endian() != .little) return error.SkipZigTest; // packed struct TODO
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
     // note: this bug is triggered by the == operator, expectEqual will hide it
@@ -199,8 +215,8 @@ test "load non byte-sized value in union" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     // note: this bug is triggered by the == operator, expectEqual will hide it
     // using ptrCast not to depend on unitialised memory state

@@ -5,11 +5,11 @@ const expect = std.testing.expect;
 /// Returns whether x is negative or negative 0.
 pub fn signbit(x: anytype) bool {
     const T = @TypeOf(x);
-    const TBits = std.meta.Int(.unsigned, @typeInfo(T).Float.bits);
+    const TBits = std.meta.Int(.unsigned, @typeInfo(T).float.bits);
     return @as(TBits, @bitCast(x)) >> (@bitSizeOf(T) - 1) != 0;
 }
 
-test "math.signbit" {
+test signbit {
     inline for ([_]type{ f16, f32, f64, f80, f128 }) |T| {
         try expect(!signbit(@as(T, 0.0)));
         try expect(!signbit(@as(T, 1.0)));

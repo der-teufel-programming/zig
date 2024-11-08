@@ -1,6 +1,6 @@
 const std = @import("../../std.zig");
-const errno = getErrno;
-const unexpectedErrno = std.os.unexpectedErrno;
+const errno = linux.E.init;
+const unexpectedErrno = std.posix.unexpectedErrno;
 const expectEqual = std.testing.expectEqual;
 const expectError = std.testing.expectError;
 const expect = std.testing.expect;
@@ -8,7 +8,6 @@ const expect = std.testing.expect;
 const linux = std.os.linux;
 const fd_t = linux.fd_t;
 const pid_t = linux.pid_t;
-const getErrno = linux.getErrno;
 
 pub const btf = @import("bpf/btf.zig");
 pub const kern = @import("bpf/kern.zig");
@@ -140,9 +139,9 @@ pub const F_REPLACE = 0x4;
 pub const F_STRICT_ALIGNMENT = 0x1;
 
 /// If BPF_F_ANY_ALIGNMENT is used in BPF_PROF_LOAD command, the verifier will
-/// allow any alignment whatsoever.  On platforms with strict alignment
-/// requirements for loads ands stores (such as sparc and mips) the verifier
-/// validates that all loads and stores provably follow this requirement.  This
+/// allow any alignment whatsoever. On platforms with strict alignment
+/// requirements for loads and stores (such as sparc and mips) the verifier
+/// validates that all loads and stores provably follow this requirement. This
 /// flag turns that checking and enforcement off.
 ///
 /// It is mostly used for testing when we want to validate the context and
@@ -163,7 +162,7 @@ pub const F_ANY_ALIGNMENT = 0x2;
 ///
 /// So, this flag is introduced. Once it is set, verifier will randomize high
 /// 32-bit for those instructions who has been identified as safe to ignore
-/// them.  Then, if verifier is not doing correct analysis, such randomization
+/// them. Then, if verifier is not doing correct analysis, such randomization
 /// will regress tests to expose bugs.
 pub const F_TEST_RND_HI32 = 0x4;
 
@@ -206,7 +205,7 @@ pub const BPF_F_NO_PREALLOC = 0x1;
 
 /// flag for BPF_MAP_CREATE command. Instead of having one common LRU list in
 /// the BPF_MAP_TYPE_LRU_[PERCPU_]HASH map, use a percpu LRU list which can
-/// scale and perform better.  Note, the LRU nodes (including free nodes) cannot
+/// scale and perform better. Note, the LRU nodes (including free nodes) cannot
 /// be moved across different LRU lists.
 pub const BPF_F_NO_COMMON_LRU = 0x2;
 
@@ -460,7 +459,7 @@ pub const Insn = packed struct {
     };
 
     fn imm_reg(code: u8, dst: Reg, src: anytype, off: i16) Insn {
-        const imm_or_reg = if (@TypeOf(src) == Reg or @typeInfo(@TypeOf(src)) == .EnumLiteral)
+        const imm_or_reg = if (@TypeOf(src) == Reg or @typeInfo(@TypeOf(src)) == .enum_literal)
             ImmOrReg{ .reg = @as(Reg, src) }
         else
             ImmOrReg{ .imm = src };
@@ -696,8 +695,8 @@ pub const Insn = packed struct {
     fn endian_swap(endian: std.builtin.Endian, comptime size: Size, dst: Reg) Insn {
         return Insn{
             .code = switch (endian) {
-                .Big => 0xdc,
-                .Little => 0xd4,
+                .big => 0xdc,
+                .little => 0xd4,
             },
             .dst = @intFromEnum(dst),
             .src = 0,
@@ -712,11 +711,11 @@ pub const Insn = packed struct {
     }
 
     pub fn le(comptime size: Size, dst: Reg) Insn {
-        return endian_swap(.Little, size, dst);
+        return endian_swap(.little, size, dst);
     }
 
     pub fn be(comptime size: Size, dst: Reg) Insn {
-        return endian_swap(.Big, size, dst);
+        return endian_swap(.big, size, dst);
     }
 
     pub fn call(helper: Helper) Insn {
@@ -860,7 +859,7 @@ test "opcodes" {
 }
 
 pub const Cmd = enum(usize) {
-    /// Create  a map and return a file descriptor that refers to the map.  The
+    /// Create  a map and return a file descriptor that refers to the map. The
     /// close-on-exec file descriptor flag is automatically enabled for the new
     /// file descriptor.
     ///
@@ -887,7 +886,7 @@ pub const Cmd = enum(usize) {
     map_get_next_key,
 
     /// Verify and load an eBPF program, returning a new file descriptor
-    /// associated with  the  program.   The close-on-exec file descriptor flag
+    /// associated with the program. The close-on-exec file descriptor flag
     /// is automatically enabled for the new file descriptor.
     ///
     /// uses ProgLoadAttr
@@ -1002,7 +1001,7 @@ pub const MapType = enum(u32) {
     cpumap,
     xskmap,
     sockhash,
-    cgroup_storage,
+    cgroup_storage_deprecated,
     reuseport_sockarray,
     percpu_cgroup_storage,
     queue,
@@ -1027,9 +1026,9 @@ pub const MapType = enum(u32) {
     ///     memory and can be submitted with commit() or discarded with
     ///     discard()
     ///
-    /// ringbuf_output() will incurr an extra memory copy, but allows to submit
+    /// ringbuf_output() will incur an extra memory copy, but allows to submit
     /// records of the length that's not known beforehand, and is an easy
-    /// replacement for perf_event_outptu().
+    /// replacement for perf_event_output().
     ///
     /// ringbuf_reserve() avoids the extra memory copy but requires a known size
     /// of memory beforehand.
@@ -1045,6 +1044,12 @@ pub const MapType = enum(u32) {
     /// value size: 0
     /// max entries: size of ringbuf, must be power of 2
     ringbuf,
+    inode_storage,
+    task_storage,
+    bloom_filter,
+    user_ringbuf,
+    cgroup_storage,
+    arena,
 
     _,
 };
@@ -1145,6 +1150,9 @@ pub const ProgType = enum(u32) {
     /// context type: void *
     syscall,
 
+    /// context type: bpf_nf_ctx
+    netfilter,
+
     _,
 };
 
@@ -1187,6 +1195,25 @@ pub const AttachType = enum(u32) {
     xdp_cpumap,
     sk_lookup,
     xdp,
+    sk_skb_verdict,
+    sk_reuseport_select,
+    sk_reuseport_select_or_migrate,
+    perf_event,
+    trace_kprobe_multi,
+    lsm_cgroup,
+    struct_ops,
+    netfilter,
+    tcx_ingress,
+    tcx_egress,
+    trace_uprobe_multi,
+    cgroup_unix_connect,
+    cgroup_unix_sendmsg,
+    cgroup_unix_recvmsg,
+    cgroup_unix_getpeername,
+    cgroup_unix_getsockname,
+    netkit_primary,
+    netkit_peer,
+    trace_kprobe_session,
     _,
 };
 

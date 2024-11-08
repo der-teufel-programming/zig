@@ -38,13 +38,17 @@ test parseOid {
 
 pub const Diagnostics = struct {
     allocator: Allocator,
-    errors: std.ArrayListUnmanaged(Error) = .{},
+    errors: std.ArrayListUnmanaged(Error) = .empty,
 
     pub const Error = union(enum) {
         unable_to_create_sym_link: struct {
             code: anyerror,
             file_name: []const u8,
             link_name: []const u8,
+        },
+        unable_to_create_file: struct {
+            code: anyerror,
+            file_name: []const u8,
         },
     };
 
@@ -54,6 +58,9 @@ pub const Diagnostics = struct {
                 .unable_to_create_sym_link => |info| {
                     d.allocator.free(info.file_name);
                     d.allocator.free(info.link_name);
+                },
+                .unable_to_create_file => |info| {
+                    d.allocator.free(info.file_name);
                 },
             }
         }
@@ -83,7 +90,7 @@ pub const Repository = struct {
     ) !void {
         try repository.odb.seekOid(commit_oid);
         const tree_oid = tree_oid: {
-            var commit_object = try repository.odb.readObject();
+            const commit_object = try repository.odb.readObject();
             if (commit_object.type != .commit) return error.NotACommit;
             break :tree_oid try getCommitTree(commit_object.data);
         };
@@ -119,17 +126,25 @@ pub const Repository = struct {
                     try repository.checkoutTree(subdir, entry.oid, sub_path, diagnostics);
                 },
                 .file => {
-                    var file = try dir.createFile(entry.name, .{});
-                    defer file.close();
                     try repository.odb.seekOid(entry.oid);
-                    var file_object = try repository.odb.readObject();
+                    const file_object = try repository.odb.readObject();
                     if (file_object.type != .blob) return error.InvalidFile;
+                    var file = dir.createFile(entry.name, .{ .exclusive = true }) catch |e| {
+                        const file_name = try std.fs.path.join(diagnostics.allocator, &.{ current_path, entry.name });
+                        errdefer diagnostics.allocator.free(file_name);
+                        try diagnostics.errors.append(diagnostics.allocator, .{ .unable_to_create_file = .{
+                            .code = e,
+                            .file_name = file_name,
+                        } });
+                        continue;
+                    };
+                    defer file.close();
                     try file.writeAll(file_object.data);
                     try file.sync();
                 },
                 .symlink => {
                     try repository.odb.seekOid(entry.oid);
-                    var symlink_object = try repository.odb.readObject();
+                    const symlink_object = try repository.odb.readObject();
                     if (symlink_object.type != .blob) return error.InvalidFile;
                     const link_name = symlink_object.data;
                     dir.symLink(link_name, entry.name, .{}) catch |e| {
@@ -248,7 +263,7 @@ const Odb = struct {
     fn readObject(odb: *Odb) !Object {
         var base_offset = try odb.pack_file.getPos();
         var base_header: EntryHeader = undefined;
-        var delta_offsets = std.ArrayListUnmanaged(u64){};
+        var delta_offsets: std.ArrayListUnmanaged(u64) = .empty;
         defer delta_offsets.deinit(odb.allocator);
         const base_object = while (true) {
             if (odb.cache.get(base_offset)) |base_object| break base_object;
@@ -305,12 +320,12 @@ const Odb = struct {
         const n_objects = odb.index_header.fan_out_table[255];
         const offset_values_start = IndexHeader.size + n_objects * (oid_length + 4);
         try odb.index_file.seekTo(offset_values_start + found_index * 4);
-        const l1_offset: packed struct { value: u31, big: bool } = @bitCast(try odb.index_file.reader().readIntBig(u32));
+        const l1_offset: packed struct { value: u31, big: bool } = @bitCast(try odb.index_file.reader().readInt(u32, .big));
         const pack_offset = pack_offset: {
             if (l1_offset.big) {
                 const l2_offset_values_start = offset_values_start + n_objects * 4;
                 try odb.index_file.seekTo(l2_offset_values_start + l1_offset.value * 4);
-                break :pack_offset try odb.index_file.reader().readIntBig(u64);
+                break :pack_offset try odb.index_file.reader().readInt(u64, .big);
             } else {
                 break :pack_offset l1_offset.value;
             }
@@ -346,7 +361,7 @@ const Object = struct {
 /// freed by the caller at any point after inserting it into the cache. Any
 /// objects remaining in the cache will be freed when the cache itself is freed.
 const ObjectCache = struct {
-    objects: std.AutoHashMapUnmanaged(u64, CacheEntry) = .{},
+    objects: std.AutoHashMapUnmanaged(u64, CacheEntry) = .empty,
     lru_nodes: LruList = .{},
     byte_size: usize = 0,
 
@@ -456,6 +471,20 @@ const Packet = union(enum) {
             },
         }
     }
+
+    /// Returns the normalized form of textual packet data, stripping any
+    /// trailing '\n'.
+    ///
+    /// As documented in
+    /// [protocol-common](https://git-scm.com/docs/protocol-common#_pkt_line_format),
+    /// non-binary (textual) pkt-line data should contain a trailing '\n', but
+    /// is not required to do so (implementations must support both forms).
+    fn normalizeText(data: []const u8) []const u8 {
+        return if (mem.endsWith(u8, data, "\n"))
+            data[0 .. data.len - 1]
+        else
+            data;
+    }
 };
 
 /// A client session for the Git protocol, currently limited to an HTTP(S)
@@ -480,8 +509,9 @@ pub const Session = struct {
         session: *Session,
         allocator: Allocator,
         redirect_uri: *[]u8,
+        http_headers_buffer: []u8,
     ) !void {
-        var capability_iterator = try session.getCapabilities(allocator, redirect_uri);
+        var capability_iterator = try session.getCapabilities(allocator, redirect_uri, http_headers_buffer);
         defer capability_iterator.deinit();
         while (try capability_iterator.next()) |capability| {
             if (mem.eql(u8, capability.key, "agent")) {
@@ -507,30 +537,39 @@ pub const Session = struct {
         session: Session,
         allocator: Allocator,
         redirect_uri: *[]u8,
+        http_headers_buffer: []u8,
     ) !CapabilityIterator {
         var info_refs_uri = session.uri;
-        info_refs_uri.path = try std.fs.path.resolvePosix(allocator, &.{ "/", session.uri.path, "info/refs" });
-        defer allocator.free(info_refs_uri.path);
-        info_refs_uri.query = "service=git-upload-pack";
+        {
+            const session_uri_path = try std.fmt.allocPrint(allocator, "{path}", .{session.uri.path});
+            defer allocator.free(session_uri_path);
+            info_refs_uri.path = .{ .percent_encoded = try std.fs.path.resolvePosix(allocator, &.{ "/", session_uri_path, "info/refs" }) };
+        }
+        defer allocator.free(info_refs_uri.path.percent_encoded);
+        info_refs_uri.query = .{ .percent_encoded = "service=git-upload-pack" };
         info_refs_uri.fragment = null;
 
-        var headers = std.http.Headers.init(allocator);
-        defer headers.deinit();
-        try headers.append("Git-Protocol", "version=2");
-
-        var request = try session.transport.request(.GET, info_refs_uri, headers, .{
-            .max_redirects = 3,
+        const max_redirects = 3;
+        var request = try session.transport.open(.GET, info_refs_uri, .{
+            .redirect_behavior = @enumFromInt(max_redirects),
+            .server_header_buffer = http_headers_buffer,
+            .extra_headers = &.{
+                .{ .name = "Git-Protocol", .value = "version=2" },
+            },
         });
         errdefer request.deinit();
-        try request.start(.{});
+        try request.send();
         try request.finish();
 
         try request.wait();
         if (request.response.status != .ok) return error.ProtocolError;
-        if (request.redirects_left < 3) {
-            if (!mem.endsWith(u8, request.uri.path, "/info/refs")) return error.UnparseableRedirect;
+        const any_redirects_occurred = request.redirect_behavior.remaining() < max_redirects;
+        if (any_redirects_occurred) {
+            const request_uri_path = try std.fmt.allocPrint(allocator, "{path}", .{request.uri.path});
+            defer allocator.free(request_uri_path);
+            if (!mem.endsWith(u8, request_uri_path, "/info/refs")) return error.UnparseableRedirect;
             var new_uri = request.uri;
-            new_uri.path = new_uri.path[0 .. new_uri.path.len - "/info/refs".len];
+            new_uri.path = .{ .percent_encoded = request_uri_path[0 .. request_uri_path.len - "/info/refs".len] };
             new_uri.query = null;
             redirect_uri.* = try std.fmt.allocPrint(allocator, "{+/}", .{new_uri});
             return error.Redirected;
@@ -554,7 +593,7 @@ pub const Session = struct {
             switch (packet) {
                 .flush => state = .response_start,
                 .data => |data| switch (state) {
-                    .response_start => if (mem.eql(u8, data, "version 2\n")) {
+                    .response_start => if (mem.eql(u8, Packet.normalizeText(data), "version 2")) {
                         return .{ .request = request };
                     } else {
                         state = .response_content;
@@ -573,6 +612,13 @@ pub const Session = struct {
         const Capability = struct {
             key: []const u8,
             value: ?[]const u8 = null,
+
+            fn parse(data: []const u8) Capability {
+                return if (mem.indexOfScalar(u8, data, '=')) |separator_pos|
+                    .{ .key = data[0..separator_pos], .value = data[separator_pos + 1 ..] }
+                else
+                    .{ .key = data };
+            }
         };
 
         fn deinit(iterator: *CapabilityIterator) void {
@@ -583,13 +629,7 @@ pub const Session = struct {
         fn next(iterator: *CapabilityIterator) !?Capability {
             switch (try Packet.read(iterator.request.reader(), &iterator.buf)) {
                 .flush => return null,
-                .data => |data| if (data.len > 0 and data[data.len - 1] == '\n') {
-                    if (mem.indexOfScalar(u8, data, '=')) |separator_pos| {
-                        return .{ .key = data[0..separator_pos], .value = data[separator_pos + 1 .. data.len - 1] };
-                    } else {
-                        return .{ .key = data[0 .. data.len - 1] };
-                    }
-                } else return error.UnexpectedPacket,
+                .data => |data| return Capability.parse(Packet.normalizeText(data)),
                 else => return error.UnexpectedPacket,
             }
         }
@@ -605,22 +645,22 @@ pub const Session = struct {
         include_symrefs: bool = false,
         /// Whether to include the peeled object ID for returned tag refs.
         include_peeled: bool = false,
+        server_header_buffer: []u8,
     };
 
     /// Returns an iterator over refs known to the server.
     pub fn listRefs(session: Session, allocator: Allocator, options: ListRefsOptions) !RefIterator {
         var upload_pack_uri = session.uri;
-        upload_pack_uri.path = try std.fs.path.resolvePosix(allocator, &.{ "/", session.uri.path, "git-upload-pack" });
-        defer allocator.free(upload_pack_uri.path);
+        {
+            const session_uri_path = try std.fmt.allocPrint(allocator, "{path}", .{session.uri.path});
+            defer allocator.free(session_uri_path);
+            upload_pack_uri.path = .{ .percent_encoded = try std.fs.path.resolvePosix(allocator, &.{ "/", session_uri_path, "git-upload-pack" }) };
+        }
+        defer allocator.free(upload_pack_uri.path.percent_encoded);
         upload_pack_uri.query = null;
         upload_pack_uri.fragment = null;
 
-        var headers = std.http.Headers.init(allocator);
-        defer headers.deinit();
-        try headers.append("Content-Type", "application/x-git-upload-pack-request");
-        try headers.append("Git-Protocol", "version=2");
-
-        var body = std.ArrayListUnmanaged(u8){};
+        var body: std.ArrayListUnmanaged(u8) = .empty;
         defer body.deinit(allocator);
         const body_writer = body.writer(allocator);
         try Packet.write(.{ .data = "command=ls-refs\n" }, body_writer);
@@ -641,12 +681,17 @@ pub const Session = struct {
         }
         try Packet.write(.flush, body_writer);
 
-        var request = try session.transport.request(.POST, upload_pack_uri, headers, .{
-            .handle_redirects = false,
+        var request = try session.transport.open(.POST, upload_pack_uri, .{
+            .redirect_behavior = .unhandled,
+            .server_header_buffer = options.server_header_buffer,
+            .extra_headers = &.{
+                .{ .name = "Content-Type", .value = "application/x-git-upload-pack-request" },
+                .{ .name = "Git-Protocol", .value = "version=2" },
+            },
         });
         errdefer request.deinit();
         request.transfer_encoding = .{ .content_length = body.items.len };
-        try request.start(.{});
+        try request.send();
         try request.writeAll(body.items);
         try request.finish();
 
@@ -676,18 +721,19 @@ pub const Session = struct {
             switch (try Packet.read(iterator.request.reader(), &iterator.buf)) {
                 .flush => return null,
                 .data => |data| {
-                    const oid_sep_pos = mem.indexOfScalar(u8, data, ' ') orelse return error.InvalidRefPacket;
+                    const ref_data = Packet.normalizeText(data);
+                    const oid_sep_pos = mem.indexOfScalar(u8, ref_data, ' ') orelse return error.InvalidRefPacket;
                     const oid = parseOid(data[0..oid_sep_pos]) catch return error.InvalidRefPacket;
 
-                    const name_sep_pos = mem.indexOfAnyPos(u8, data, oid_sep_pos + 1, " \n") orelse return error.InvalidRefPacket;
-                    const name = data[oid_sep_pos + 1 .. name_sep_pos];
+                    const name_sep_pos = mem.indexOfScalarPos(u8, ref_data, oid_sep_pos + 1, ' ') orelse ref_data.len;
+                    const name = ref_data[oid_sep_pos + 1 .. name_sep_pos];
 
                     var symref_target: ?[]const u8 = null;
                     var peeled: ?Oid = null;
                     var last_sep_pos = name_sep_pos;
-                    while (data[last_sep_pos] == ' ') {
-                        const next_sep_pos = mem.indexOfAnyPos(u8, data, last_sep_pos + 1, " \n") orelse return error.InvalidRefPacket;
-                        const attribute = data[last_sep_pos + 1 .. next_sep_pos];
+                    while (last_sep_pos < ref_data.len) {
+                        const next_sep_pos = mem.indexOfScalarPos(u8, ref_data, last_sep_pos + 1, ' ') orelse ref_data.len;
+                        const attribute = ref_data[last_sep_pos + 1 .. next_sep_pos];
                         if (mem.startsWith(u8, attribute, "symref-target:")) {
                             symref_target = attribute["symref-target:".len..];
                         } else if (mem.startsWith(u8, attribute, "peeled:")) {
@@ -705,19 +751,23 @@ pub const Session = struct {
 
     /// Fetches the given refs from the server. A shallow fetch (depth 1) is
     /// performed if the server supports it.
-    pub fn fetch(session: Session, allocator: Allocator, wants: []const []const u8) !FetchStream {
+    pub fn fetch(
+        session: Session,
+        allocator: Allocator,
+        wants: []const []const u8,
+        http_headers_buffer: []u8,
+    ) !FetchStream {
         var upload_pack_uri = session.uri;
-        upload_pack_uri.path = try std.fs.path.resolvePosix(allocator, &.{ "/", session.uri.path, "git-upload-pack" });
-        defer allocator.free(upload_pack_uri.path);
+        {
+            const session_uri_path = try std.fmt.allocPrint(allocator, "{path}", .{session.uri.path});
+            defer allocator.free(session_uri_path);
+            upload_pack_uri.path = .{ .percent_encoded = try std.fs.path.resolvePosix(allocator, &.{ "/", session_uri_path, "git-upload-pack" }) };
+        }
+        defer allocator.free(upload_pack_uri.path.percent_encoded);
         upload_pack_uri.query = null;
         upload_pack_uri.fragment = null;
 
-        var headers = std.http.Headers.init(allocator);
-        defer headers.deinit();
-        try headers.append("Content-Type", "application/x-git-upload-pack-request");
-        try headers.append("Git-Protocol", "version=2");
-
-        var body = std.ArrayListUnmanaged(u8){};
+        var body: std.ArrayListUnmanaged(u8) = .empty;
         defer body.deinit(allocator);
         const body_writer = body.writer(allocator);
         try Packet.write(.{ .data = "command=fetch\n" }, body_writer);
@@ -740,12 +790,17 @@ pub const Session = struct {
         try Packet.write(.{ .data = "done\n" }, body_writer);
         try Packet.write(.flush, body_writer);
 
-        var request = try session.transport.request(.POST, upload_pack_uri, headers, .{
-            .handle_redirects = false,
+        var request = try session.transport.open(.POST, upload_pack_uri, .{
+            .redirect_behavior = .not_allowed,
+            .server_header_buffer = http_headers_buffer,
+            .extra_headers = &.{
+                .{ .name = "Content-Type", .value = "application/x-git-upload-pack-request" },
+                .{ .name = "Git-Protocol", .value = "version=2" },
+            },
         });
         errdefer request.deinit();
         request.transfer_encoding = .{ .content_length = body.items.len };
-        try request.start(.{});
+        try request.send();
         try request.writeAll(body.items);
         try request.finish();
 
@@ -762,7 +817,7 @@ pub const Session = struct {
             const packet = try Packet.read(reader, &buf);
             switch (state) {
                 .section_start => switch (packet) {
-                    .data => |data| if (mem.eql(u8, data, "packfile\n")) {
+                    .data => |data| if (mem.eql(u8, Packet.normalizeText(data), "packfile")) {
                         return .{ .request = request };
                     } else {
                         state = .section_content;
@@ -845,12 +900,12 @@ const PackHeader = struct {
             else => |other| return other,
         };
         if (!mem.eql(u8, &actual_signature, signature)) return error.InvalidHeader;
-        const version = reader.readIntBig(u32) catch |e| switch (e) {
+        const version = reader.readInt(u32, .big) catch |e| switch (e) {
             error.EndOfStream => return error.InvalidHeader,
             else => |other| return other,
         };
         if (version != supported_version) return error.UnsupportedVersion;
-        const total_objects = reader.readIntBig(u32) catch |e| switch (e) {
+        const total_objects = reader.readInt(u32, .big) catch |e| switch (e) {
             error.EndOfStream => return error.InvalidHeader,
             else => |other| return other,
         };
@@ -966,14 +1021,14 @@ const IndexHeader = struct {
     fn read(reader: anytype) !IndexHeader {
         var header_bytes = try reader.readBytesNoEof(size);
         if (!mem.eql(u8, header_bytes[0..4], signature)) return error.InvalidHeader;
-        const version = mem.readIntBig(u32, header_bytes[4..8]);
+        const version = mem.readInt(u32, header_bytes[4..8], .big);
         if (version != supported_version) return error.UnsupportedVersion;
 
         var fan_out_table: [256]u32 = undefined;
         var fan_out_table_stream = std.io.fixedBufferStream(header_bytes[8..]);
         const fan_out_table_reader = fan_out_table_stream.reader();
         for (&fan_out_table) |*entry| {
-            entry.* = fan_out_table_reader.readIntBig(u32) catch unreachable;
+            entry.* = fan_out_table_reader.readInt(u32, .big) catch unreachable;
         }
         return .{ .fan_out_table = fan_out_table };
     }
@@ -989,9 +1044,9 @@ const IndexEntry = struct {
 pub fn indexPack(allocator: Allocator, pack: std.fs.File, index_writer: anytype) !void {
     try pack.seekTo(0);
 
-    var index_entries = std.AutoHashMapUnmanaged(Oid, IndexEntry){};
+    var index_entries: std.AutoHashMapUnmanaged(Oid, IndexEntry) = .empty;
     defer index_entries.deinit(allocator);
-    var pending_deltas = std.ArrayListUnmanaged(IndexEntry){};
+    var pending_deltas: std.ArrayListUnmanaged(IndexEntry) = .empty;
     defer pending_deltas.deinit(allocator);
 
     const pack_checksum = try indexPackFirstPass(allocator, pack, &index_entries, &pending_deltas);
@@ -1013,7 +1068,7 @@ pub fn indexPack(allocator: Allocator, pack: std.fs.File, index_writer: anytype)
         remaining_deltas = pending_deltas.items.len;
     }
 
-    var oids = std.ArrayListUnmanaged(Oid){};
+    var oids: std.ArrayListUnmanaged(Oid) = .empty;
     defer oids.deinit(allocator);
     try oids.ensureTotalCapacityPrecise(allocator, index_entries.count());
     var index_entries_iter = index_entries.iterator();
@@ -1041,9 +1096,9 @@ pub fn indexPack(allocator: Allocator, pack: std.fs.File, index_writer: anytype)
     var index_hashed_writer = hashedWriter(index_writer, Sha1.init(.{}));
     const writer = index_hashed_writer.writer();
     try writer.writeAll(IndexHeader.signature);
-    try writer.writeIntBig(u32, IndexHeader.supported_version);
+    try writer.writeInt(u32, IndexHeader.supported_version, .big);
     for (fan_out_table) |fan_out_entry| {
-        try writer.writeIntBig(u32, fan_out_entry);
+        try writer.writeInt(u32, fan_out_entry, .big);
     }
 
     for (oids.items) |oid| {
@@ -1051,23 +1106,23 @@ pub fn indexPack(allocator: Allocator, pack: std.fs.File, index_writer: anytype)
     }
 
     for (oids.items) |oid| {
-        try writer.writeIntBig(u32, index_entries.get(oid).?.crc32);
+        try writer.writeInt(u32, index_entries.get(oid).?.crc32, .big);
     }
 
-    var big_offsets = std.ArrayListUnmanaged(u64){};
+    var big_offsets: std.ArrayListUnmanaged(u64) = .empty;
     defer big_offsets.deinit(allocator);
     for (oids.items) |oid| {
         const offset = index_entries.get(oid).?.offset;
         if (offset <= std.math.maxInt(u31)) {
-            try writer.writeIntBig(u32, @intCast(offset));
+            try writer.writeInt(u32, @intCast(offset), .big);
         } else {
             const index = big_offsets.items.len;
             try big_offsets.append(allocator, offset);
-            try writer.writeIntBig(u32, @as(u32, @intCast(index)) | (1 << 31));
+            try writer.writeInt(u32, @as(u32, @intCast(index)) | (1 << 31), .big);
         }
     }
     for (big_offsets.items) |offset| {
-        try writer.writeIntBig(u64, offset);
+        try writer.writeInt(u64, offset, .big);
     }
 
     try writer.writeAll(&pack_checksum);
@@ -1098,15 +1153,14 @@ fn indexPackFirstPass(
         var entry_crc32_reader = std.compress.hashedReader(pack_reader, std.hash.Crc32.init());
         const entry_header = try EntryHeader.read(entry_crc32_reader.reader());
         switch (entry_header) {
-            inline .commit, .tree, .blob, .tag => |object, tag| {
-                var entry_decompress_stream = try std.compress.zlib.decompressStream(allocator, entry_crc32_reader.reader());
-                defer entry_decompress_stream.deinit();
+            .commit, .tree, .blob, .tag => |object| {
+                var entry_decompress_stream = std.compress.zlib.decompressor(entry_crc32_reader.reader());
                 var entry_counting_reader = std.io.countingReader(entry_decompress_stream.reader());
                 var entry_hashed_writer = hashedWriter(std.io.null_writer, Sha1.init(.{}));
                 const entry_writer = entry_hashed_writer.writer();
                 // The object header is not included in the pack data but is
                 // part of the object's ID
-                try entry_writer.print("{s} {}\x00", .{ @tagName(tag), object.uncompressed_length });
+                try entry_writer.print("{s} {}\x00", .{ @tagName(entry_header), object.uncompressed_length });
                 var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
                 try fifo.pump(entry_counting_reader.reader(), entry_writer);
                 if (entry_counting_reader.bytes_read != object.uncompressed_length) {
@@ -1119,8 +1173,7 @@ fn indexPackFirstPass(
                 });
             },
             inline .ofs_delta, .ref_delta => |delta| {
-                var entry_decompress_stream = try std.compress.zlib.decompressStream(allocator, entry_crc32_reader.reader());
-                defer entry_decompress_stream.deinit();
+                var entry_decompress_stream = std.compress.zlib.decompressor(entry_crc32_reader.reader());
                 var entry_counting_reader = std.io.countingReader(entry_decompress_stream.reader());
                 var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
                 try fifo.pump(entry_counting_reader.reader(), std.io.null_writer);
@@ -1140,7 +1193,7 @@ fn indexPackFirstPass(
     if (!mem.eql(u8, &pack_checksum, &recorded_checksum)) {
         return error.CorruptedPack;
     }
-    _ = pack_buffered_reader.reader().readByte() catch |e| switch (e) {
+    _ = pack_reader.readByte() catch |e| switch (e) {
         error.EndOfStream => return pack_checksum,
         else => |other| return other,
     };
@@ -1160,7 +1213,7 @@ fn indexPackHashDelta(
     // Figure out the chain of deltas to resolve
     var base_offset = delta.offset;
     var base_header: EntryHeader = undefined;
-    var delta_offsets = std.ArrayListUnmanaged(u64){};
+    var delta_offsets: std.ArrayListUnmanaged(u64) = .empty;
     defer delta_offsets.deinit(allocator);
     const base_object = while (true) {
         if (cache.get(base_offset)) |base_object| break base_object;
@@ -1214,7 +1267,7 @@ fn resolveDeltaChain(
         const delta_offset = delta_offsets[i];
         try pack.seekTo(delta_offset);
         const delta_header = try EntryHeader.read(pack.reader());
-        var delta_data = try readObjectRaw(allocator, pack.reader(), delta_header.uncompressedLength());
+        const delta_data = try readObjectRaw(allocator, pack.reader(), delta_header.uncompressedLength());
         defer allocator.free(delta_data);
         var delta_stream = std.io.fixedBufferStream(delta_data);
         const delta_reader = delta_stream.reader();
@@ -1222,7 +1275,7 @@ fn resolveDeltaChain(
         const expanded_size = try readSizeVarInt(delta_reader);
 
         const expanded_alloc_size = std.math.cast(usize, expanded_size) orelse return error.ObjectTooLarge;
-        var expanded_data = try allocator.alloc(u8, expanded_alloc_size);
+        const expanded_data = try allocator.alloc(u8, expanded_alloc_size);
         errdefer allocator.free(expanded_data);
         var expanded_delta_stream = std.io.fixedBufferStream(expanded_data);
         var base_stream = std.io.fixedBufferStream(base_data);
@@ -1241,9 +1294,8 @@ fn resolveDeltaChain(
 fn readObjectRaw(allocator: Allocator, reader: anytype, size: u64) ![]u8 {
     const alloc_size = std.math.cast(usize, size) orelse return error.ObjectTooLarge;
     var buffered_reader = std.io.bufferedReader(reader);
-    var decompress_stream = try std.compress.zlib.decompressStream(allocator, buffered_reader.reader());
-    defer decompress_stream.deinit();
-    var data = try allocator.alloc(u8, alloc_size);
+    var decompress_stream = std.compress.zlib.decompressor(buffered_reader.reader());
+    const data = try allocator.alloc(u8, alloc_size);
     errdefer allocator.free(data);
     try decompress_stream.reader().readNoEof(data);
     _ = decompress_stream.reader().readByte() catch |e| switch (e) {
@@ -1274,14 +1326,14 @@ fn expandDelta(base_object: anytype, delta_reader: anytype, writer: anytype) !vo
                 size2: bool,
                 size3: bool,
             } = @bitCast(inst.value);
-            var offset_parts: packed struct { offset1: u8, offset2: u8, offset3: u8, offset4: u8 } = .{
+            const offset_parts: packed struct { offset1: u8, offset2: u8, offset3: u8, offset4: u8 } = .{
                 .offset1 = if (available.offset1) try delta_reader.readByte() else 0,
                 .offset2 = if (available.offset2) try delta_reader.readByte() else 0,
                 .offset3 = if (available.offset3) try delta_reader.readByte() else 0,
                 .offset4 = if (available.offset4) try delta_reader.readByte() else 0,
             };
             const offset: u32 = @bitCast(offset_parts);
-            var size_parts: packed struct { size1: u8, size2: u8, size3: u8 } = .{
+            const size_parts: packed struct { size1: u8, size2: u8, size3: u8 } = .{
                 .size1 = if (available.size1) try delta_reader.readByte() else 0,
                 .size2 = if (available.size2) try delta_reader.readByte() else 0,
                 .size3 = if (available.size3) try delta_reader.readByte() else 0,
@@ -1368,11 +1420,15 @@ test "packfile indexing and checkout" {
     var repository = try Repository.init(testing.allocator, pack_file, index_file);
     defer repository.deinit();
 
-    var worktree = testing.tmpIterableDir(.{});
+    var worktree = testing.tmpDir(.{ .iterate = true });
     defer worktree.cleanup();
 
     const commit_id = try parseOid("dd582c0720819ab7130b103635bd7271b9fd4feb");
-    try repository.checkout(worktree.iterable_dir.dir, commit_id);
+
+    var diagnostics: Diagnostics = .{ .allocator = testing.allocator };
+    defer diagnostics.deinit();
+    try repository.checkout(worktree.dir, commit_id, &diagnostics);
+    try testing.expect(diagnostics.errors.items.len == 0);
 
     const expected_files: []const []const u8 = &.{
         "dir/file",
@@ -1391,14 +1447,14 @@ test "packfile indexing and checkout" {
         "file8",
         "file9",
     };
-    var actual_files: std.ArrayListUnmanaged([]u8) = .{};
+    var actual_files: std.ArrayListUnmanaged([]u8) = .empty;
     defer actual_files.deinit(testing.allocator);
     defer for (actual_files.items) |file| testing.allocator.free(file);
-    var walker = try worktree.iterable_dir.walk(testing.allocator);
+    var walker = try worktree.dir.walk(testing.allocator);
     defer walker.deinit();
     while (try walker.next()) |entry| {
         if (entry.kind != .file) continue;
-        var path = try testing.allocator.dupe(u8, entry.path);
+        const path = try testing.allocator.dupe(u8, entry.path);
         errdefer testing.allocator.free(path);
         mem.replaceScalar(u8, path, std.fs.path.sep, '/');
         try actual_files.append(testing.allocator, path);
@@ -1426,7 +1482,7 @@ test "packfile indexing and checkout" {
         \\revision 19
         \\
     ;
-    const actual_file_contents = try worktree.iterable_dir.dir.readFileAlloc(testing.allocator, "file", max_file_size);
+    const actual_file_contents = try worktree.dir.readFileAlloc(testing.allocator, "file", max_file_size);
     defer testing.allocator.free(actual_file_contents);
     try testing.expectEqualStrings(expected_file_contents, actual_file_contents);
 }
@@ -1462,5 +1518,11 @@ pub fn main() !void {
     std.debug.print("Starting checkout...\n", .{});
     var repository = try Repository.init(allocator, pack_file, index_file);
     defer repository.deinit();
-    try repository.checkout(worktree, commit);
+    var diagnostics: Diagnostics = .{ .allocator = allocator };
+    defer diagnostics.deinit();
+    try repository.checkout(worktree, commit, &diagnostics);
+
+    for (diagnostics.errors.items) |err| {
+        std.debug.print("Diagnostic: {}\n", .{err});
+    }
 }

@@ -50,7 +50,6 @@ const Mutex = std.Thread.Mutex;
 const os = std.os;
 const assert = std.debug.assert;
 const testing = std.testing;
-const Atomic = std.atomic.Atomic;
 const Futex = std.Thread.Futex;
 
 impl: Impl = .{},
@@ -164,7 +163,7 @@ const WindowsImpl = struct {
 
         if (comptime builtin.mode == .Debug) {
             // The internal state of the DebugMutex needs to be handled here as well.
-            mutex.impl.locking_thread.store(0, .Unordered);
+            mutex.impl.locking_thread.store(0, .unordered);
         }
         const rc = os.windows.kernel32.SleepConditionVariableSRW(
             &self.condition,
@@ -174,12 +173,12 @@ const WindowsImpl = struct {
         );
         if (comptime builtin.mode == .Debug) {
             // The internal state of the DebugMutex needs to be handled here as well.
-            mutex.impl.locking_thread.store(std.Thread.getCurrentId(), .Unordered);
+            mutex.impl.locking_thread.store(std.Thread.getCurrentId(), .unordered);
         }
 
         // Return error.Timeout if we know the timeout elapsed correctly.
         if (rc == os.windows.FALSE) {
-            assert(os.windows.kernel32.GetLastError() == .TIMEOUT);
+            assert(os.windows.GetLastError() == .TIMEOUT);
             if (!timeout_overflowed) return error.Timeout;
         }
     }
@@ -193,8 +192,8 @@ const WindowsImpl = struct {
 };
 
 const FutexImpl = struct {
-    state: Atomic(u32) = Atomic(u32).init(0),
-    epoch: Atomic(u32) = Atomic(u32).init(0),
+    state: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    epoch: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     const one_waiter = 1;
     const waiter_mask = 0xffff;
@@ -213,8 +212,8 @@ const FutexImpl = struct {
         // - T1: s & signals == 0 -> FUTEX_WAIT(&epoch, e) (missed the state update + the epoch change)
         //
         // Acquire barrier to ensure the epoch load happens before the state load.
-        var epoch = self.epoch.load(.Acquire);
-        var state = self.state.fetchAdd(one_waiter, .Monotonic);
+        var epoch = self.epoch.load(.acquire);
+        var state = self.state.fetchAdd(one_waiter, .monotonic);
         assert(state & waiter_mask != waiter_mask);
         state += one_waiter;
 
@@ -232,30 +231,30 @@ const FutexImpl = struct {
                         // Acquire barrier ensures code before the wake() which added the signal happens before we decrement it and return.
                         while (state & signal_mask != 0) {
                             const new_state = state - one_waiter - one_signal;
-                            state = self.state.tryCompareAndSwap(state, new_state, .Acquire, .Monotonic) orelse return;
+                            state = self.state.cmpxchgWeak(state, new_state, .acquire, .monotonic) orelse return;
                         }
 
                         // Remove the waiter we added and officially return timed out.
                         const new_state = state - one_waiter;
-                        state = self.state.tryCompareAndSwap(state, new_state, .Monotonic, .Monotonic) orelse return err;
+                        state = self.state.cmpxchgWeak(state, new_state, .monotonic, .monotonic) orelse return err;
                     }
                 },
             };
 
-            epoch = self.epoch.load(.Acquire);
-            state = self.state.load(.Monotonic);
+            epoch = self.epoch.load(.acquire);
+            state = self.state.load(.monotonic);
 
             // Try to wake up by consuming a signal and decremented the waiter we added previously.
             // Acquire barrier ensures code before the wake() which added the signal happens before we decrement it and return.
             while (state & signal_mask != 0) {
                 const new_state = state - one_waiter - one_signal;
-                state = self.state.tryCompareAndSwap(state, new_state, .Acquire, .Monotonic) orelse return;
+                state = self.state.cmpxchgWeak(state, new_state, .acquire, .monotonic) orelse return;
             }
         }
     }
 
     fn wake(self: *Impl, comptime notify: Notify) void {
-        var state = self.state.load(.Monotonic);
+        var state = self.state.load(.monotonic);
         while (true) {
             const waiters = (state & waiter_mask) / one_waiter;
             const signals = (state & signal_mask) / one_signal;
@@ -276,7 +275,7 @@ const FutexImpl = struct {
             // Reserve the amount of waiters to wake by incrementing the signals count.
             // Release barrier ensures code before the wake() happens before the signal it posted and consumed by the wait() threads.
             const new_state = state + (one_signal * to_wake);
-            state = self.state.tryCompareAndSwap(state, new_state, .Release, .Monotonic) orelse {
+            state = self.state.cmpxchgWeak(state, new_state, .release, .monotonic) orelse {
                 // Wake up the waiting threads we reserved above by changing the epoch value.
                 // NOTE: a waiting thread could miss a wake up if *exactly* ((1<<32)-1) wake()s happen between it observing the epoch and sleeping on it.
                 // This is very unlikely due to how many precise amount of Futex.wake() calls that would be between the waiting thread's potential preemption.
@@ -289,7 +288,7 @@ const FutexImpl = struct {
                 // - T1: s = LOAD(&state)
                 // - T2: UPDATE(&state, signal) + FUTEX_WAKE(&epoch)
                 // - T1: s & signals == 0 -> FUTEX_WAIT(&epoch, e) (missed both epoch change and state change)
-                _ = self.epoch.fetchAdd(1, .Release);
+                _ = self.epoch.fetchAdd(1, .release);
                 Futex.wake(&self.epoch, to_wake);
                 return;
             };
@@ -297,7 +296,7 @@ const FutexImpl = struct {
     }
 };
 
-test "Condition - smoke test" {
+test "smoke test" {
     var mutex = Mutex{};
     var cond = Condition{};
 
@@ -318,7 +317,7 @@ test "Condition - smoke test" {
 }
 
 // Inspired from: https://github.com/Amanieu/parking_lot/pull/129
-test "Condition - wait and signal" {
+test "wait and signal" {
     // This test requires spawning threads
     if (builtin.single_threaded) {
         return error.SkipZigTest;
@@ -363,7 +362,7 @@ test "Condition - wait and signal" {
     }
 }
 
-test "Condition - signal" {
+test signal {
     // This test requires spawning threads
     if (builtin.single_threaded) {
         return error.SkipZigTest;
@@ -430,7 +429,7 @@ test "Condition - signal" {
     }
 }
 
-test "Condition - multi signal" {
+test "multi signal" {
     // This test requires spawning threads
     if (builtin.single_threaded) {
         return error.SkipZigTest;
@@ -492,7 +491,7 @@ test "Condition - multi signal" {
     }
 }
 
-test "Condition - broadcasting" {
+test broadcast {
     // This test requires spawning threads
     if (builtin.single_threaded) {
         return error.SkipZigTest;
@@ -558,7 +557,7 @@ test "Condition - broadcasting" {
     }
 }
 
-test "Condition - broadcasting - wake all threads" {
+test "broadcasting - wake all threads" {
     // Tests issue #12877
     // This test requires spawning threads
     if (builtin.single_threaded) {

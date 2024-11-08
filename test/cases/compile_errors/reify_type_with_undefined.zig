@@ -1,13 +1,13 @@
 comptime {
-    _ = @Type(.{ .Array = .{ .len = 0, .child = u8, .sentinel = undefined } });
+    _ = @Type(.{ .array = .{ .len = 0, .child = u8, .sentinel = undefined } });
 }
 comptime {
     _ = @Type(.{
-        .Struct = .{
+        .@"struct" = .{
             .fields = undefined,
             .decls = undefined,
             .is_tuple = false,
-            .layout = .Auto,
+            .layout = .auto,
         },
     });
 }
@@ -15,8 +15,8 @@ comptime {
     const std = @import("std");
     const fields: [1]std.builtin.Type.StructField = undefined;
     _ = @Type(.{
-        .Struct = .{
-            .layout = .Auto,
+        .@"struct" = .{
+            .layout = .auto,
             .fields = &fields,
             .decls = &.{},
             .is_tuple = false,
@@ -28,6 +28,6 @@ comptime {
 // backend=stage2
 // target=native
 //
-// :2:9: error: use of undefined value here causes undefined behavior
-// :5:9: error: use of undefined value here causes undefined behavior
-// :17:9: error: use of undefined value here causes undefined behavior
+// :2:16: error: use of undefined value here causes undefined behavior
+// :5:16: error: use of undefined value here causes undefined behavior
+// :17:16: error: use of undefined value here causes undefined behavior

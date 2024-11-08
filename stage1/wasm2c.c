@@ -73,14 +73,30 @@ static void renderExpr(FILE *out, struct InputStream *in) {
     }
 }
 
+static const uint32_t big_endian = 0xff000000;
+
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "usage: %s in.wasm.zst out.c\n", argv[0]);
+    if (argc != 3 && argc != 4) {
+        fprintf(stderr, "usage: %s <in.wasm.zst> <out.c> [endian]\n", argv[0]);
         return 1;
     }
 
+    bool is_big_endian;
+
+    if (argc >= 4) {
+        if (!strcmp(argv[3], "big")) {
+            is_big_endian = true;
+        } else if (!strcmp(argv[3], "little")) {
+            is_big_endian = false;
+        } else {
+            fprintf(stderr, "endianness must be 'big' or 'little'\n");
+            return 1;
+        }
+    } else {
+        is_big_endian = *(uint8_t *)&big_endian; // Infer from host endianness.
+    }
+
     const char *mod = "wasm";
-    bool is_big_endian = false; // TODO
 
     struct InputStream in;
     InputStream_open(&in, argv[1]);
@@ -111,55 +127,55 @@ int main(int argc, char **argv) {
           "           (uint64_t)i32_byteswap(src >> 32) <<  0;\n"
           "}\n"
           "\n", out);
-    fputs("static uint16_t load16_align0(const uint8_t *ptr) {\n"
+    fputs("uint16_t load16_align0(const uint8_t *ptr) {\n"
           "    uint16_t val;\n"
           "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i16_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
-          "static uint16_t load16_align1(const uint16_t *ptr) {\n"
+          "uint16_t load16_align1(const uint16_t *ptr) {\n"
           "    uint16_t val;\n"
           "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i16_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
-          "static uint32_t load32_align0(const uint8_t *ptr) {\n"
+          "uint32_t load32_align0(const uint8_t *ptr) {\n"
           "    uint32_t val;\n"
           "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
-          "static uint32_t load32_align1(const uint16_t *ptr) {\n"
+          "uint32_t load32_align1(const uint16_t *ptr) {\n"
           "    uint32_t val;\n"
           "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
-          "static uint32_t load32_align2(const uint32_t *ptr) {\n"
+          "uint32_t load32_align2(const uint32_t *ptr) {\n"
           "    uint32_t val;\n"
           "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
-          "static uint64_t load64_align0(const uint8_t *ptr) {\n"
+          "uint64_t load64_align0(const uint8_t *ptr) {\n"
           "    uint64_t val;\n"
           "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
-          "static uint64_t load64_align1(const uint16_t *ptr) {\n"
+          "uint64_t load64_align1(const uint16_t *ptr) {\n"
           "    uint64_t val;\n"
           "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
-          "static uint64_t load64_align2(const uint32_t *ptr) {\n"
+          "uint64_t load64_align2(const uint32_t *ptr) {\n"
           "    uint64_t val;\n"
           "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
-          "static uint64_t load64_align3(const uint64_t *ptr) {\n"
+          "uint64_t load64_align3(const uint64_t *ptr) {\n"
           "    uint64_t val;\n"
           "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
@@ -199,39 +215,39 @@ int main(int argc, char **argv) {
           "    return i64_ctz(lhs);\n"
           "}\n"
           "\n"
-          "static void store16_align0(uint8_t *ptr, uint16_t val) {\n", out);
+          "void store16_align0(uint8_t *ptr, uint16_t val) {\n", out);
     if (is_big_endian) fputs("    val = i16_byteswap(val);", out);
     fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
-          "static void store16_align1(uint16_t *ptr, uint16_t val) {\n", out);
+          "void store16_align1(uint16_t *ptr, uint16_t val) {\n", out);
     if (is_big_endian) fputs("    val = i16_byteswap(val);", out);
     fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
-          "static void store32_align0(uint8_t *ptr, uint32_t val) {\n", out);
+          "void store32_align0(uint8_t *ptr, uint32_t val) {\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
     fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
-          "static void store32_align1(uint16_t *ptr, uint32_t val) {\n", out);
+          "void store32_align1(uint16_t *ptr, uint32_t val) {\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
     fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
-          "static void store32_align2(uint32_t *ptr, uint32_t val) {\n", out);
+          "void store32_align2(uint32_t *ptr, uint32_t val) {\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
     fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
-          "static void store64_align0(uint8_t *ptr, uint64_t val) {\n", out);
+          "void store64_align0(uint8_t *ptr, uint64_t val) {\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
-          "static void store64_align1(uint16_t *ptr, uint64_t val) {\n", out);
+          "void store64_align1(uint16_t *ptr, uint64_t val) {\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
-          "static void store64_align2(uint32_t *ptr, uint64_t val) {\n", out);
+          "void store64_align2(uint32_t *ptr, uint64_t val) {\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
-          "static void store64_align3(uint64_t *ptr, uint64_t val) {\n", out);
+          "void store64_align3(uint64_t *ptr, uint64_t val) {\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
@@ -261,13 +277,13 @@ int main(int argc, char **argv) {
           "    uint8_t *new_m = *m;\n"
           "    uint32_t r = *p;\n"
           "    uint32_t new_p = r + n;\n"
-          "    if (new_p > UINT32_C(0x10000)) return UINT32_C(0xFFFFFFF);\n"
+          "    if (new_p > UINT32_C(0xFFFF)) return UINT32_C(0xFFFFFFFF);\n"
           "    uint32_t new_c = *c;\n"
           "    if (new_c < new_p) {\n"
           "        do new_c += new_c / 2 + 8; while (new_c < new_p);\n"
-          "        if (new_c > UINT32_C(0x10000)) new_c = UINT32_C(0x10000);\n"
+          "        if (new_c > UINT32_C(0xFFFF)) new_c = UINT32_C(0xFFFF);\n"
           "        new_m = realloc(new_m, new_c << 16);\n"
-          "        if (new_m == NULL) return UINT32_C(0xFFFFFFF);\n"
+          "        if (new_m == NULL) return UINT32_C(0xFFFFFFFF);\n"
           "        *m = new_m;\n"
           "        *c = new_c;\n"
           "    }\n"
@@ -484,7 +500,6 @@ int main(int argc, char **argv) {
 
     (void)InputStream_skipToSection(&in, WasmSectionId_elem);
     {
-        uint32_t table_i = 0;
         uint32_t len = InputStream_readLeb128_u32(&in);
         fputs("static void init_elem(void) {\n", out);
         for (uint32_t segment_i = 0; segment_i < len; segment_i += 1) {
@@ -518,7 +533,7 @@ int main(int argc, char **argv) {
         for (uint32_t func_i = 0; func_i < len; func_i += 1) {
             FuncGen_reset(&fg);
 
-            uint32_t code_len = InputStream_readLeb128_u32(&in);
+            InputStream_readLeb128_u32(&in);
             const struct FuncType *func_type = &types[funcs[func_i].type_idx];
             fputs("static ", out);
             switch (func_type->result->len) {

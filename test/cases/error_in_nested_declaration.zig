@@ -19,13 +19,13 @@ const S2 = struct {
 
 pub export fn entry2() void {
     var s: S2 = undefined;
-    _ = s;
+    _ = &s;
 }
 
 // error
 // backend=llvm
 // target=native
 //
-// :17:12: error: C pointers cannot point to opaque types
 // :6:20: error: cannot @bitCast to '[]i32'
 // :6:20: note: use @ptrCast to cast from '[]u32'
+// :17:12: error: C pointers cannot point to opaque types

@@ -5,9 +5,9 @@ const common = @import("./common.zig");
 pub const panic = @import("common.zig").panic;
 
 comptime {
-    @export(__addosi4, .{ .name = "__addosi4", .linkage = common.linkage, .visibility = common.visibility });
-    @export(__addodi4, .{ .name = "__addodi4", .linkage = common.linkage, .visibility = common.visibility });
-    @export(__addoti4, .{ .name = "__addoti4", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&__addosi4, .{ .name = "__addosi4", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&__addodi4, .{ .name = "__addodi4", .linkage = common.linkage, .visibility = common.visibility });
+    @export(&__addoti4, .{ .name = "__addoti4", .linkage = common.linkage, .visibility = common.visibility });
 }
 
 // addo - add overflow
@@ -18,14 +18,14 @@ comptime {
 inline fn addoXi4_generic(comptime ST: type, a: ST, b: ST, overflow: *c_int) ST {
     @setRuntimeSafety(builtin.is_test);
     overflow.* = 0;
-    var sum: ST = a +% b;
+    const sum: ST = a +% b;
     // Hackers Delight: section Overflow Detection, subsection Signed Add/Subtract
     // Let sum = a +% b == a + b + carry == wraparound addition.
     // Overflow in a+b+carry occurs, iff a and b have opposite signs
     // and the sign of a+b+carry is the same as a (or equivalently b).
     // Slower routine: res = ~(a ^ b) & ((sum ^ a)
     // Faster routine: res = (sum ^ a) & (sum ^ b)
-    // Overflow occured, iff (res < 0)
+    // Overflow occurred, iff (res < 0)
     if (((sum ^ a) & (sum ^ b)) < 0)
         overflow.* = 1;
     return sum;

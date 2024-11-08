@@ -1,9 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const wasi = std.os.wasi;
-const iovec = std.os.iovec;
-const iovec_const = std.os.iovec_const;
+const linux = std.os.linux;
+const iovec = std.posix.iovec;
+const iovec_const = std.posix.iovec_const;
 const c = std.c;
+
+// TODO: go through this file and delete all the bits that are identical to linux because they can
+// be merged in the std.c namespace.
 
 pub const FILE = c.FILE;
 
@@ -17,144 +21,15 @@ comptime {
     if (builtin.os.tag == .emscripten) {
         if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
             // Emscripten does not provide these symbols, so we must export our own
-            @export(__stack_chk_guard, .{ .name = "__stack_chk_guard", .linkage = .Strong });
-            @export(__stack_chk_fail, .{ .name = "__stack_chk_fail", .linkage = .Strong });
+            @export(&__stack_chk_guard, .{ .name = "__stack_chk_guard", .linkage = .strong });
+            @export(&__stack_chk_fail, .{ .name = "__stack_chk_fail", .linkage = .strong });
         }
     }
 }
 
-pub const PF = struct {
-    pub const UNSPEC = 0;
-    pub const LOCAL = 1;
-    pub const UNIX = LOCAL;
-    pub const FILE = LOCAL;
-    pub const INET = 2;
-    pub const AX25 = 3;
-    pub const IPX = 4;
-    pub const APPLETALK = 5;
-    pub const NETROM = 6;
-    pub const BRIDGE = 7;
-    pub const ATMPVC = 8;
-    pub const X25 = 9;
-    pub const INET6 = 10;
-    pub const ROSE = 11;
-    pub const DECnet = 12;
-    pub const NETBEUI = 13;
-    pub const SECURITY = 14;
-    pub const KEY = 15;
-    pub const NETLINK = 16;
-    pub const ROUTE = PF.NETLINK;
-    pub const PACKET = 17;
-    pub const ASH = 18;
-    pub const ECONET = 19;
-    pub const ATMSVC = 20;
-    pub const RDS = 21;
-    pub const SNA = 22;
-    pub const IRDA = 23;
-    pub const PPPOX = 24;
-    pub const WANPIPE = 25;
-    pub const LLC = 26;
-    pub const IB = 27;
-    pub const MPLS = 28;
-    pub const CAN = 29;
-    pub const TIPC = 30;
-    pub const BLUETOOTH = 31;
-    pub const IUCV = 32;
-    pub const RXRPC = 33;
-    pub const ISDN = 34;
-    pub const PHONET = 35;
-    pub const IEEE802154 = 36;
-    pub const CAIF = 37;
-    pub const ALG = 38;
-    pub const NFC = 39;
-    pub const VSOCK = 40;
-    pub const KCM = 41;
-    pub const QIPCRTR = 42;
-    pub const SMC = 43;
-    pub const XDP = 44;
-    pub const MAX = 45;
-};
-
-pub const AF = struct {
-    pub const UNSPEC = PF.UNSPEC;
-    pub const LOCAL = PF.LOCAL;
-    pub const UNIX = AF.LOCAL;
-    pub const FILE = AF.LOCAL;
-    pub const INET = PF.INET;
-    pub const AX25 = PF.AX25;
-    pub const IPX = PF.IPX;
-    pub const APPLETALK = PF.APPLETALK;
-    pub const NETROM = PF.NETROM;
-    pub const BRIDGE = PF.BRIDGE;
-    pub const ATMPVC = PF.ATMPVC;
-    pub const X25 = PF.X25;
-    pub const INET6 = PF.INET6;
-    pub const ROSE = PF.ROSE;
-    pub const DECnet = PF.DECnet;
-    pub const NETBEUI = PF.NETBEUI;
-    pub const SECURITY = PF.SECURITY;
-    pub const KEY = PF.KEY;
-    pub const NETLINK = PF.NETLINK;
-    pub const ROUTE = PF.ROUTE;
-    pub const PACKET = PF.PACKET;
-    pub const ASH = PF.ASH;
-    pub const ECONET = PF.ECONET;
-    pub const ATMSVC = PF.ATMSVC;
-    pub const RDS = PF.RDS;
-    pub const SNA = PF.SNA;
-    pub const IRDA = PF.IRDA;
-    pub const PPPOX = PF.PPPOX;
-    pub const WANPIPE = PF.WANPIPE;
-    pub const LLC = PF.LLC;
-    pub const IB = PF.IB;
-    pub const MPLS = PF.MPLS;
-    pub const CAN = PF.CAN;
-    pub const TIPC = PF.TIPC;
-    pub const BLUETOOTH = PF.BLUETOOTH;
-    pub const IUCV = PF.IUCV;
-    pub const RXRPC = PF.RXRPC;
-    pub const ISDN = PF.ISDN;
-    pub const PHONET = PF.PHONET;
-    pub const IEEE802154 = PF.IEEE802154;
-    pub const CAIF = PF.CAIF;
-    pub const ALG = PF.ALG;
-    pub const NFC = PF.NFC;
-    pub const VSOCK = PF.VSOCK;
-    pub const KCM = PF.KCM;
-    pub const QIPCRTR = PF.QIPCRTR;
-    pub const SMC = PF.SMC;
-    pub const XDP = PF.XDP;
-    pub const MAX = PF.MAX;
-};
-
-pub const AT = struct {
-    pub const FDCWD = -100;
-    pub const SYMLINK_NOFOLLOW = 0x100;
-    pub const REMOVEDIR = 0x200;
-    pub const SYMLINK_FOLLOW = 0x400;
-    pub const NO_AUTOMOUNT = 0x800;
-    pub const EMPTY_PATH = 0x1000;
-    pub const STATX_SYNC_TYPE = 0x6000;
-    pub const STATX_SYNC_AS_STAT = 0x0000;
-    pub const STATX_FORCE_SYNC = 0x2000;
-    pub const STATX_DONT_SYNC = 0x4000;
-    pub const RECURSIVE = 0x8000;
-};
-
-pub const CLOCK = struct {
-    pub const REALTIME = 0;
-    pub const MONOTONIC = 1;
-    pub const PROCESS_CPUTIME_ID = 2;
-    pub const THREAD_CPUTIME_ID = 3;
-    pub const MONOTONIC_RAW = 4;
-    pub const REALTIME_COARSE = 5;
-    pub const MONOTONIC_COARSE = 6;
-    pub const BOOTTIME = 7;
-    pub const REALTIME_ALARM = 8;
-    pub const BOOTTIME_ALARM = 9;
-    pub const SGI_CYCLE = 10;
-    pub const TAI = 11;
-};
+pub const PF = linux.PF;
+pub const AF = linux.AF;
+pub const CLOCK = linux.CLOCK;
 
 pub const CPU_SETSIZE = 128;
 pub const cpu_set_t = [CPU_SETSIZE / @sizeOf(usize)]usize;
@@ -169,85 +44,85 @@ pub fn CPU_COUNT(set: cpu_set_t) cpu_count_t {
 }
 
 pub const E = enum(u16) {
-    SUCCESS = @intFromEnum(wasi.E.SUCCESS),
-    @"2BIG" = @intFromEnum(wasi.E.@"2BIG"),
-    ACCES = @intFromEnum(wasi.E.ACCES),
-    ADDRINUSE = @intFromEnum(wasi.E.ADDRINUSE),
-    ADDRNOTAVAIL = @intFromEnum(wasi.E.ADDRNOTAVAIL),
-    AFNOSUPPORT = @intFromEnum(wasi.E.AFNOSUPPORT),
+    SUCCESS = @intFromEnum(wasi.errno_t.SUCCESS),
+    @"2BIG" = @intFromEnum(wasi.errno_t.@"2BIG"),
+    ACCES = @intFromEnum(wasi.errno_t.ACCES),
+    ADDRINUSE = @intFromEnum(wasi.errno_t.ADDRINUSE),
+    ADDRNOTAVAIL = @intFromEnum(wasi.errno_t.ADDRNOTAVAIL),
+    AFNOSUPPORT = @intFromEnum(wasi.errno_t.AFNOSUPPORT),
     /// This is also the error code used for `WOULDBLOCK`.
-    AGAIN = @intFromEnum(wasi.E.AGAIN),
-    ALREADY = @intFromEnum(wasi.E.ALREADY),
-    BADF = @intFromEnum(wasi.E.BADF),
-    BADMSG = @intFromEnum(wasi.E.BADMSG),
-    BUSY = @intFromEnum(wasi.E.BUSY),
-    CANCELED = @intFromEnum(wasi.E.CANCELED),
-    CHILD = @intFromEnum(wasi.E.CHILD),
-    CONNABORTED = @intFromEnum(wasi.E.CONNABORTED),
-    CONNREFUSED = @intFromEnum(wasi.E.CONNREFUSED),
-    CONNRESET = @intFromEnum(wasi.E.CONNRESET),
-    DEADLK = @intFromEnum(wasi.E.DEADLK),
-    DESTADDRREQ = @intFromEnum(wasi.E.DESTADDRREQ),
-    DOM = @intFromEnum(wasi.E.DOM),
-    DQUOT = @intFromEnum(wasi.E.DQUOT),
-    EXIST = @intFromEnum(wasi.E.EXIST),
-    FAULT = @intFromEnum(wasi.E.FAULT),
-    FBIG = @intFromEnum(wasi.E.FBIG),
-    HOSTUNREACH = @intFromEnum(wasi.E.HOSTUNREACH),
-    IDRM = @intFromEnum(wasi.E.IDRM),
-    ILSEQ = @intFromEnum(wasi.E.ILSEQ),
-    INPROGRESS = @intFromEnum(wasi.E.INPROGRESS),
-    INTR = @intFromEnum(wasi.E.INTR),
-    INVAL = @intFromEnum(wasi.E.INVAL),
-    IO = @intFromEnum(wasi.E.IO),
-    ISCONN = @intFromEnum(wasi.E.ISCONN),
-    ISDIR = @intFromEnum(wasi.E.ISDIR),
-    LOOP = @intFromEnum(wasi.E.LOOP),
-    MFILE = @intFromEnum(wasi.E.MFILE),
-    MLINK = @intFromEnum(wasi.E.MLINK),
-    MSGSIZE = @intFromEnum(wasi.E.MSGSIZE),
-    MULTIHOP = @intFromEnum(wasi.E.MULTIHOP),
-    NAMETOOLONG = @intFromEnum(wasi.E.NAMETOOLONG),
-    NETDOWN = @intFromEnum(wasi.E.NETDOWN),
-    NETRESET = @intFromEnum(wasi.E.NETRESET),
-    NETUNREACH = @intFromEnum(wasi.E.NETUNREACH),
-    NFILE = @intFromEnum(wasi.E.NFILE),
-    NOBUFS = @intFromEnum(wasi.E.NOBUFS),
-    NODEV = @intFromEnum(wasi.E.NODEV),
-    NOENT = @intFromEnum(wasi.E.NOENT),
-    NOEXEC = @intFromEnum(wasi.E.NOEXEC),
-    NOLCK = @intFromEnum(wasi.E.NOLCK),
-    NOLINK = @intFromEnum(wasi.E.NOLINK),
-    NOMEM = @intFromEnum(wasi.E.NOMEM),
-    NOMSG = @intFromEnum(wasi.E.NOMSG),
-    NOPROTOOPT = @intFromEnum(wasi.E.NOPROTOOPT),
-    NOSPC = @intFromEnum(wasi.E.NOSPC),
-    NOSYS = @intFromEnum(wasi.E.NOSYS),
-    NOTCONN = @intFromEnum(wasi.E.NOTCONN),
-    NOTDIR = @intFromEnum(wasi.E.NOTDIR),
-    NOTEMPTY = @intFromEnum(wasi.E.NOTEMPTY),
-    NOTRECOVERABLE = @intFromEnum(wasi.E.NOTRECOVERABLE),
-    NOTSOCK = @intFromEnum(wasi.E.NOTSOCK),
+    AGAIN = @intFromEnum(wasi.errno_t.AGAIN),
+    ALREADY = @intFromEnum(wasi.errno_t.ALREADY),
+    BADF = @intFromEnum(wasi.errno_t.BADF),
+    BADMSG = @intFromEnum(wasi.errno_t.BADMSG),
+    BUSY = @intFromEnum(wasi.errno_t.BUSY),
+    CANCELED = @intFromEnum(wasi.errno_t.CANCELED),
+    CHILD = @intFromEnum(wasi.errno_t.CHILD),
+    CONNABORTED = @intFromEnum(wasi.errno_t.CONNABORTED),
+    CONNREFUSED = @intFromEnum(wasi.errno_t.CONNREFUSED),
+    CONNRESET = @intFromEnum(wasi.errno_t.CONNRESET),
+    DEADLK = @intFromEnum(wasi.errno_t.DEADLK),
+    DESTADDRREQ = @intFromEnum(wasi.errno_t.DESTADDRREQ),
+    DOM = @intFromEnum(wasi.errno_t.DOM),
+    DQUOT = @intFromEnum(wasi.errno_t.DQUOT),
+    EXIST = @intFromEnum(wasi.errno_t.EXIST),
+    FAULT = @intFromEnum(wasi.errno_t.FAULT),
+    FBIG = @intFromEnum(wasi.errno_t.FBIG),
+    HOSTUNREACH = @intFromEnum(wasi.errno_t.HOSTUNREACH),
+    IDRM = @intFromEnum(wasi.errno_t.IDRM),
+    ILSEQ = @intFromEnum(wasi.errno_t.ILSEQ),
+    INPROGRESS = @intFromEnum(wasi.errno_t.INPROGRESS),
+    INTR = @intFromEnum(wasi.errno_t.INTR),
+    INVAL = @intFromEnum(wasi.errno_t.INVAL),
+    IO = @intFromEnum(wasi.errno_t.IO),
+    ISCONN = @intFromEnum(wasi.errno_t.ISCONN),
+    ISDIR = @intFromEnum(wasi.errno_t.ISDIR),
+    LOOP = @intFromEnum(wasi.errno_t.LOOP),
+    MFILE = @intFromEnum(wasi.errno_t.MFILE),
+    MLINK = @intFromEnum(wasi.errno_t.MLINK),
+    MSGSIZE = @intFromEnum(wasi.errno_t.MSGSIZE),
+    MULTIHOP = @intFromEnum(wasi.errno_t.MULTIHOP),
+    NAMETOOLONG = @intFromEnum(wasi.errno_t.NAMETOOLONG),
+    NETDOWN = @intFromEnum(wasi.errno_t.NETDOWN),
+    NETRESET = @intFromEnum(wasi.errno_t.NETRESET),
+    NETUNREACH = @intFromEnum(wasi.errno_t.NETUNREACH),
+    NFILE = @intFromEnum(wasi.errno_t.NFILE),
+    NOBUFS = @intFromEnum(wasi.errno_t.NOBUFS),
+    NODEV = @intFromEnum(wasi.errno_t.NODEV),
+    NOENT = @intFromEnum(wasi.errno_t.NOENT),
+    NOEXEC = @intFromEnum(wasi.errno_t.NOEXEC),
+    NOLCK = @intFromEnum(wasi.errno_t.NOLCK),
+    NOLINK = @intFromEnum(wasi.errno_t.NOLINK),
+    NOMEM = @intFromEnum(wasi.errno_t.NOMEM),
+    NOMSG = @intFromEnum(wasi.errno_t.NOMSG),
+    NOPROTOOPT = @intFromEnum(wasi.errno_t.NOPROTOOPT),
+    NOSPC = @intFromEnum(wasi.errno_t.NOSPC),
+    NOSYS = @intFromEnum(wasi.errno_t.NOSYS),
+    NOTCONN = @intFromEnum(wasi.errno_t.NOTCONN),
+    NOTDIR = @intFromEnum(wasi.errno_t.NOTDIR),
+    NOTEMPTY = @intFromEnum(wasi.errno_t.NOTEMPTY),
+    NOTRECOVERABLE = @intFromEnum(wasi.errno_t.NOTRECOVERABLE),
+    NOTSOCK = @intFromEnum(wasi.errno_t.NOTSOCK),
     /// This is also the code used for `NOTSUP`.
-    OPNOTSUPP = @intFromEnum(wasi.E.OPNOTSUPP),
-    NOTTY = @intFromEnum(wasi.E.NOTTY),
-    NXIO = @intFromEnum(wasi.E.NXIO),
-    OVERFLOW = @intFromEnum(wasi.E.OVERFLOW),
-    OWNERDEAD = @intFromEnum(wasi.E.OWNERDEAD),
-    PERM = @intFromEnum(wasi.E.PERM),
-    PIPE = @intFromEnum(wasi.E.PIPE),
-    PROTO = @intFromEnum(wasi.E.PROTO),
-    PROTONOSUPPORT = @intFromEnum(wasi.E.PROTONOSUPPORT),
-    PROTOTYPE = @intFromEnum(wasi.E.PROTOTYPE),
-    RANGE = @intFromEnum(wasi.E.RANGE),
-    ROFS = @intFromEnum(wasi.E.ROFS),
-    SPIPE = @intFromEnum(wasi.E.SPIPE),
-    SRCH = @intFromEnum(wasi.E.SRCH),
-    STALE = @intFromEnum(wasi.E.STALE),
-    TIMEDOUT = @intFromEnum(wasi.E.TIMEDOUT),
-    TXTBSY = @intFromEnum(wasi.E.TXTBSY),
-    XDEV = @intFromEnum(wasi.E.XDEV),
-    NOTCAPABLE = @intFromEnum(wasi.E.NOTCAPABLE),
+    OPNOTSUPP = @intFromEnum(wasi.errno_t.OPNOTSUPP),
+    NOTTY = @intFromEnum(wasi.errno_t.NOTTY),
+    NXIO = @intFromEnum(wasi.errno_t.NXIO),
+    OVERFLOW = @intFromEnum(wasi.errno_t.OVERFLOW),
+    OWNERDEAD = @intFromEnum(wasi.errno_t.OWNERDEAD),
+    PERM = @intFromEnum(wasi.errno_t.PERM),
+    PIPE = @intFromEnum(wasi.errno_t.PIPE),
+    PROTO = @intFromEnum(wasi.errno_t.PROTO),
+    PROTONOSUPPORT = @intFromEnum(wasi.errno_t.PROTONOSUPPORT),
+    PROTOTYPE = @intFromEnum(wasi.errno_t.PROTOTYPE),
+    RANGE = @intFromEnum(wasi.errno_t.RANGE),
+    ROFS = @intFromEnum(wasi.errno_t.ROFS),
+    SPIPE = @intFromEnum(wasi.errno_t.SPIPE),
+    SRCH = @intFromEnum(wasi.errno_t.SRCH),
+    STALE = @intFromEnum(wasi.errno_t.STALE),
+    TIMEDOUT = @intFromEnum(wasi.errno_t.TIMEDOUT),
+    TXTBSY = @intFromEnum(wasi.errno_t.TXTBSY),
+    XDEV = @intFromEnum(wasi.errno_t.XDEV),
+    NOTCAPABLE = @intFromEnum(wasi.errno_t.NOTCAPABLE),
 
     ENOSTR = 100,
     EBFONT = 101,
@@ -382,41 +257,7 @@ pub const IOV_MAX = 1024;
 
 pub const IPPORT_RESERVED = 1024;
 
-pub const IPPROTO = struct {
-    pub const IP = 0;
-    pub const HOPOPTS = 0;
-    pub const ICMP = 1;
-    pub const IGMP = 2;
-    pub const IPIP = 4;
-    pub const TCP = 6;
-    pub const EGP = 8;
-    pub const PUP = 12;
-    pub const UDP = 17;
-    pub const IDP = 22;
-    pub const TP = 29;
-    pub const DCCP = 33;
-    pub const IPV6 = 41;
-    pub const ROUTING = 43;
-    pub const FRAGMENT = 44;
-    pub const RSVP = 46;
-    pub const GRE = 47;
-    pub const ESP = 50;
-    pub const AH = 51;
-    pub const ICMPV6 = 58;
-    pub const NONE = 59;
-    pub const DSTOPTS = 60;
-    pub const MTP = 92;
-    pub const BEETPH = 94;
-    pub const ENCAP = 98;
-    pub const PIM = 103;
-    pub const COMP = 108;
-    pub const SCTP = 132;
-    pub const MH = 135;
-    pub const UDPLITE = 136;
-    pub const MPLS = 137;
-    pub const RAW = 255;
-    pub const MAX = 256;
-};
+pub const IPPROTO = linux.IPPROTO;
 
 pub const LOCK = struct {
     pub const SH = 1;
@@ -449,27 +290,6 @@ pub const MADV = struct {
     pub const SOFT_OFFLINE = 101;
 };
 
-pub const MAP = struct {
-    pub const SHARED = 0x01;
-    pub const PRIVATE = 0x02;
-    pub const SHARED_VALIDATE = 0x03;
-    pub const TYPE = 0x0f;
-    pub const FIXED = 0x10;
-    pub const ANON = 0x20;
-    pub const ANONYMOUS = ANON;
-    pub const NORESERVE = 0x4000;
-    pub const GROWSDOWN = 0x0100;
-    pub const DENYWRITE = 0x0800;
-    pub const EXECUTABLE = 0x1000;
-    pub const LOCKED = 0x2000;
-    pub const POPULATE = 0x8000;
-    pub const NONBLOCK = 0x10000;
-    pub const STACK = 0x20000;
-    pub const HUGETLB = 0x40000;
-    pub const SYNC = 0x80000;
-    pub const FIXED_NOREPLACE = 0x100000;
-};
-
 pub const MSF = struct {
     pub const ASYNC = 1;
     pub const INVALIDATE = 2;
@@ -498,33 +318,6 @@ pub const MSG = struct {
     pub const ZEROCOPY = 0x4000000;
     pub const FASTOPEN = 0x20000000;
     pub const CMSG_CLOEXEC = 0x40000000;
-};
-
-pub const O = struct {
-    pub const RDONLY = 0o0;
-    pub const WRONLY = 0o1;
-    pub const RDWR = 0o2;
-
-    pub const CREAT = 0o100;
-    pub const EXCL = 0o200;
-    pub const NOCTTY = 0o400;
-    pub const TRUNC = 0o1000;
-    pub const APPEND = 0o2000;
-    pub const NONBLOCK = 0o4000;
-    pub const DSYNC = 0o10000;
-    pub const SYNC = 0o4010000;
-    pub const RSYNC = 0o4010000;
-    pub const DIRECTORY = 0o200000;
-    pub const NOFOLLOW = 0o400000;
-    pub const CLOEXEC = 0o2000000;
-
-    pub const ASYNC = 0o20000;
-    pub const DIRECT = 0o40000;
-    pub const LARGEFILE = 0o100000;
-    pub const NOATIME = 0o1000000;
-    pub const PATH = 0o10000000;
-    pub const TMPFILE = 0o20200000;
-    pub const NDELAY = NONBLOCK;
 };
 
 pub const POLL = struct {
@@ -556,10 +349,7 @@ pub const RLIM = struct {
     pub const SAVED_CUR = INFINITY;
 };
 
-pub const rlimit = extern struct {
-    cur: rlim_t,
-    max: rlim_t,
-};
+pub const rlimit = c.rlimit;
 
 pub const rlimit_resource = enum(c_int) {
     CPU,
@@ -606,8 +396,8 @@ pub const rusage = extern struct {
 };
 
 pub const timeval = extern struct {
-    tv_sec: i64,
-    tv_usec: i32,
+    sec: i64,
+    usec: i32,
 };
 
 pub const REG = struct {
@@ -751,14 +541,14 @@ pub const SIG = struct {
     pub const SYS = 31;
     pub const UNUSED = SIG.SYS;
 
-    pub const ERR = @as(?Sigaction.handler_fn, @ptrFromInt(std.math.maxInt(usize)));
-    pub const DFL = @as(?Sigaction.handler_fn, @ptrFromInt(0));
-    pub const IGN = @as(?Sigaction.handler_fn, @ptrFromInt(1));
+    pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(std.math.maxInt(usize));
+    pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
+    pub const IGN: ?Sigaction.handler_fn = @ptrFromInt(1);
 };
 
 pub const Sigaction = extern struct {
-    pub const handler_fn = *const fn (c_int) align(1) callconv(.C) void;
-    pub const sigaction_fn = *const fn (c_int, *const siginfo_t, ?*const anyopaque) callconv(.C) void;
+    pub const handler_fn = *align(1) const fn (i32) callconv(.C) void;
+    pub const sigaction_fn = *const fn (i32, *const siginfo_t, ?*anyopaque) callconv(.C) void;
 
     handler: extern union {
         handler: ?handler_fn,
@@ -770,7 +560,7 @@ pub const Sigaction = extern struct {
 };
 
 pub const sigset_t = [1024 / 32]u32;
-pub const empty_sigset = [_]u32{0} ** @typeInfo(sigset_t).Array.len;
+pub const empty_sigset = [_]u32{0} ** @typeInfo(sigset_t).array.len;
 pub const siginfo_t = extern struct {
     signo: i32,
     errno: i32,
@@ -800,7 +590,7 @@ const siginfo_fields_union = extern union {
         },
     },
     sigfault: extern struct {
-        addr: *anyopaque,
+        addr: *allowzero anyopaque,
         addr_lsb: i16,
         first: extern union {
             addr_bnd: extern struct {
@@ -991,112 +781,13 @@ pub const TCP = struct {
     pub const REPAIR_OFF_NO_WP = -1;
 };
 
-pub const TCSA = enum(c_uint) {
-    NOW,
-    DRAIN,
-    FLUSH,
-    _,
-};
+pub const TCSA = std.posix.TCSA;
+pub const addrinfo = c.addrinfo;
 
-pub const addrinfo = extern struct {
-    flags: i32,
-    family: i32,
-    socktype: i32,
-    protocol: i32,
-    addrlen: socklen_t,
-    addr: ?*sockaddr,
-    canonname: ?[*:0]u8,
-    next: ?*addrinfo,
-};
-
-pub const in_port_t = u16;
-pub const sa_family_t = u16;
-pub const socklen_t = u32;
-
-pub const sockaddr = extern struct {
-    family: sa_family_t,
-    data: [14]u8,
-
-    pub const SS_MAXSIZE = 128;
-    pub const storage = extern struct {
-        family: sa_family_t align(8),
-        padding: [SS_MAXSIZE - @sizeOf(sa_family_t)]u8 = undefined,
-
-        comptime {
-            std.debug.assert(@sizeOf(storage) == SS_MAXSIZE);
-            std.debug.assert(@alignOf(storage) == 8);
-        }
-    };
-
-    /// IPv4 socket address
-    pub const in = extern struct {
-        family: sa_family_t = AF.INET,
-        port: in_port_t,
-        addr: u32,
-        zero: [8]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
-    };
-
-    /// IPv6 socket address
-    pub const in6 = extern struct {
-        family: sa_family_t = AF.INET6,
-        port: in_port_t,
-        flowinfo: u32,
-        addr: [16]u8,
-        scope_id: u32,
-    };
-
-    /// UNIX domain socket address
-    pub const un = extern struct {
-        family: sa_family_t = AF.UNIX,
-        path: [108]u8,
-    };
-
-    /// Packet socket address
-    pub const ll = extern struct {
-        family: sa_family_t = AF.PACKET,
-        protocol: u16,
-        ifindex: i32,
-        hatype: u16,
-        pkttype: u8,
-        halen: u8,
-        addr: [8]u8,
-    };
-
-    /// Netlink socket address
-    pub const nl = extern struct {
-        family: sa_family_t = AF.NETLINK,
-        __pad1: c_ushort = 0,
-
-        /// port ID
-        pid: u32,
-
-        /// multicast groups mask
-        groups: u32,
-    };
-
-    pub const xdp = extern struct {
-        family: u16 = AF.XDP,
-        flags: u16,
-        ifindex: u32,
-        queue_id: u32,
-        shared_umem_fd: u32,
-    };
-
-    /// Address structure for vSockets
-    pub const vm = extern struct {
-        family: sa_family_t = AF.VSOCK,
-        reserved1: u16 = 0,
-        port: u32,
-        cid: u32,
-        flags: u8,
-
-        /// The total size of this structure should be exactly the same as that of struct sockaddr.
-        zero: [3]u8 = [_]u8{0} ** 3,
-        comptime {
-            std.debug.assert(@sizeOf(vm) == @sizeOf(sockaddr));
-        }
-    };
-};
+pub const in_port_t = c.in_port_t;
+pub const sa_family_t = c.sa_family_t;
+pub const socklen_t = c.socklen_t;
+pub const sockaddr = c.sockaddr;
 
 pub const blksize_t = i32;
 pub const nlink_t = u32;
@@ -1108,16 +799,16 @@ pub const dev_t = u32;
 pub const blkcnt_t = i32;
 
 pub const pid_t = i32;
-pub const fd_t = i32;
+pub const fd_t = c.fd_t;
 pub const uid_t = u32;
 pub const gid_t = u32;
 pub const clock_t = i32;
 
 pub const dl_phdr_info = extern struct {
-    dlpi_addr: usize,
-    dlpi_name: ?[*:0]const u8,
-    dlpi_phdr: [*]std.elf.Phdr,
-    dlpi_phnum: u16,
+    addr: usize,
+    name: ?[*:0]const u8,
+    phdr: [*]std.elf.Phdr,
+    phnum: u16,
 };
 
 pub const mcontext_t = extern struct {
@@ -1127,25 +818,8 @@ pub const mcontext_t = extern struct {
     cr2: usize,
 };
 
-pub const msghdr = extern struct {
-    name: ?*sockaddr,
-    namelen: socklen_t,
-    iov: [*]iovec,
-    iovlen: i32,
-    control: ?*anyopaque,
-    controllen: socklen_t,
-    flags: i32,
-};
-
-pub const msghdr_const = extern struct {
-    name: ?*const sockaddr,
-    namelen: socklen_t,
-    iov: [*]const iovec_const,
-    iovlen: i32,
-    control: ?*const anyopaque,
-    controllen: socklen_t,
-    flags: i32,
-};
+pub const msghdr = std.c.msghdr;
+pub const msghdr_const = std.c.msghdr;
 
 pub const nfds_t = usize;
 pub const pollfd = extern struct {
@@ -1160,31 +834,14 @@ pub const stack_t = extern struct {
     size: usize,
 };
 
-pub const cc_t = u8;
-pub const speed_t = u32;
-pub const tcflag_t = u32;
-
-pub const NCCS = 32;
-
-pub const termios = extern struct {
-    iflag: tcflag_t,
-    oflag: tcflag_t,
-    cflag: tcflag_t,
-    lflag: tcflag_t,
-    line: cc_t,
-    cc: [NCCS]cc_t,
-    ispeed: speed_t,
-    ospeed: speed_t,
-};
-
 pub const timespec = extern struct {
-    tv_sec: time_t,
-    tv_nsec: isize,
+    sec: time_t,
+    nsec: isize,
 };
 
 pub const timezone = extern struct {
-    tz_minuteswest: i32,
-    tz_dsttime: i32,
+    minuteswest: i32,
+    dsttime: i32,
 };
 
 pub const ucontext_t = extern struct {

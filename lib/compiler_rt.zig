@@ -1,12 +1,14 @@
 const builtin = @import("builtin");
+const common = @import("compiler_rt/common.zig");
 
-pub const panic = @import("compiler_rt/common.zig").panic;
+pub const panic = common.panic;
 
 comptime {
     // Integer routines
     _ = @import("compiler_rt/count0bits.zig");
     _ = @import("compiler_rt/parity.zig");
     _ = @import("compiler_rt/popcount.zig");
+    _ = @import("compiler_rt/bitreverse.zig");
     _ = @import("compiler_rt/bswap.zig");
     _ = @import("compiler_rt/cmp.zig");
 
@@ -233,5 +235,12 @@ comptime {
         _ = @import("compiler_rt/memmove.zig");
         _ = @import("compiler_rt/memcmp.zig");
         _ = @import("compiler_rt/bcmp.zig");
+        _ = @import("compiler_rt/ssp.zig");
+    }
+
+    if (!builtin.link_libc and builtin.abi == .msvc) {
+        @export(&_fltused, .{ .name = "_fltused", .linkage = common.linkage, .visibility = common.visibility });
     }
 }
+
+var _fltused: c_int = 1;

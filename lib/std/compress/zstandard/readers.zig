@@ -31,22 +31,22 @@ pub const ReversedByteReader = struct {
 /// FSE compressed data.
 pub const ReverseBitReader = struct {
     byte_reader: ReversedByteReader,
-    bit_reader: std.io.BitReader(.Big, ReversedByteReader.Reader),
+    bit_reader: std.io.BitReader(.big, ReversedByteReader.Reader),
 
     pub fn init(self: *ReverseBitReader, bytes: []const u8) error{BitStreamHasNoStartBit}!void {
         self.byte_reader = ReversedByteReader.init(bytes);
-        self.bit_reader = std.io.bitReader(.Big, self.byte_reader.reader());
+        self.bit_reader = std.io.bitReader(.big, self.byte_reader.reader());
         if (bytes.len == 0) return;
         var i: usize = 0;
         while (i < 8 and 0 == self.readBitsNoEof(u1, 1) catch unreachable) : (i += 1) {}
         if (i == 8) return error.BitStreamHasNoStartBit;
     }
 
-    pub fn readBitsNoEof(self: *@This(), comptime U: type, num_bits: usize) error{EndOfStream}!U {
+    pub fn readBitsNoEof(self: *@This(), comptime U: type, num_bits: u16) error{EndOfStream}!U {
         return self.bit_reader.readBitsNoEof(U, num_bits);
     }
 
-    pub fn readBits(self: *@This(), comptime U: type, num_bits: usize, out_bits: *usize) error{}!U {
+    pub fn readBits(self: *@This(), comptime U: type, num_bits: u16, out_bits: *u16) error{}!U {
         return try self.bit_reader.readBits(U, num_bits, out_bits);
     }
 
@@ -55,19 +55,19 @@ pub const ReverseBitReader = struct {
     }
 
     pub fn isEmpty(self: ReverseBitReader) bool {
-        return self.byte_reader.remaining_bytes == 0 and self.bit_reader.bit_count == 0;
+        return self.byte_reader.remaining_bytes == 0 and self.bit_reader.count == 0;
     }
 };
 
 pub fn BitReader(comptime Reader: type) type {
     return struct {
-        underlying: std.io.BitReader(.Little, Reader),
+        underlying: std.io.BitReader(.little, Reader),
 
-        pub fn readBitsNoEof(self: *@This(), comptime U: type, num_bits: usize) !U {
+        pub fn readBitsNoEof(self: *@This(), comptime U: type, num_bits: u16) !U {
             return self.underlying.readBitsNoEof(U, num_bits);
         }
 
-        pub fn readBits(self: *@This(), comptime U: type, num_bits: usize, out_bits: *usize) !U {
+        pub fn readBits(self: *@This(), comptime U: type, num_bits: u16, out_bits: *u16) !U {
             return self.underlying.readBits(U, num_bits, out_bits);
         }
 
@@ -78,5 +78,5 @@ pub fn BitReader(comptime Reader: type) type {
 }
 
 pub fn bitReader(reader: anytype) BitReader(@TypeOf(reader)) {
-    return .{ .underlying = std.io.bitReader(.Little, reader) };
+    return .{ .underlying = std.io.bitReader(.little, reader) };
 }

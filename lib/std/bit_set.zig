@@ -33,6 +33,7 @@
 const std = @import("std.zig");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
+const builtin = @import("builtin");
 
 /// Returns the optimal static bit set type for the specified number
 /// of elements: either `IntegerBitSet` or `ArrayBitSet`,
@@ -318,10 +319,10 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
     const mask_info: std.builtin.Type = @typeInfo(MaskIntType);
 
     // Make sure the mask int is indeed an int
-    if (mask_info != .Int) @compileError("ArrayBitSet can only operate on integer masks, but was passed " ++ @typeName(MaskIntType));
+    if (mask_info != .int) @compileError("ArrayBitSet can only operate on integer masks, but was passed " ++ @typeName(MaskIntType));
 
     // It must also be unsigned.
-    if (mask_info.Int.signedness != .unsigned) @compileError("ArrayBitSet requires an unsigned integer mask type, but was passed " ++ @typeName(MaskIntType));
+    if (mask_info.int.signedness != .unsigned) @compileError("ArrayBitSet requires an unsigned integer mask type, but was passed " ++ @typeName(MaskIntType));
 
     // And it must not be empty.
     if (MaskIntType == u0)
@@ -858,6 +859,18 @@ pub const DynamicBitSetUnmanaged = struct {
         self.masks[maskIndex(index)] &= ~maskBit(index);
     }
 
+    /// Set all bits to 0.
+    pub fn unsetAll(self: *Self) void {
+        const masks_len = numMasks(self.bit_length);
+        @memset(self.masks[0..masks_len], 0);
+    }
+
+    /// Set all bits to 1.
+    pub fn setAll(self: *Self) void {
+        const masks_len = numMasks(self.bit_length);
+        @memset(self.masks[0..masks_len], std.math.maxInt(MaskInt));
+    }
+
     /// Flips a specific bit in the bit set
     pub fn toggle(self: *Self, index: usize) void {
         assert(index < self.bit_length);
@@ -1030,10 +1043,7 @@ pub const DynamicBitSet = struct {
     /// The integer type used to shift a mask in this bit set
     pub const ShiftInt = std.math.Log2Int(MaskInt);
 
-    /// The allocator used by this bit set
     allocator: Allocator,
-
-    /// The number of valid items in this bit set
     unmanaged: DynamicBitSetUnmanaged = .{},
 
     /// Creates a bit set with no elements present.
@@ -1635,8 +1645,8 @@ fn testStaticBitSet(comptime Set: type) !void {
     try testPureBitSet(Set);
 }
 
-test "IntegerBitSet" {
-    if (@import("builtin").zig_backend == .stage2_c) return error.SkipZigTest;
+test IntegerBitSet {
+    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
 
     try testStaticBitSet(IntegerBitSet(0));
     try testStaticBitSet(IntegerBitSet(1));
@@ -1648,7 +1658,7 @@ test "IntegerBitSet" {
     try testStaticBitSet(IntegerBitSet(127));
 }
 
-test "ArrayBitSet" {
+test ArrayBitSet {
     inline for (.{ 0, 1, 2, 31, 32, 33, 63, 64, 65, 254, 500, 3000 }) |size| {
         try testStaticBitSet(ArrayBitSet(u8, size));
         try testStaticBitSet(ArrayBitSet(u16, size));
@@ -1658,7 +1668,7 @@ test "ArrayBitSet" {
     }
 }
 
-test "DynamicBitSetUnmanaged" {
+test DynamicBitSetUnmanaged {
     const allocator = std.testing.allocator;
     var a = try DynamicBitSetUnmanaged.initEmpty(allocator, 300);
     try testing.expectEqual(@as(usize, 0), a.count());
@@ -1711,7 +1721,7 @@ test "DynamicBitSetUnmanaged" {
     }
 }
 
-test "DynamicBitSet" {
+test DynamicBitSet {
     const allocator = std.testing.allocator;
     var a = try DynamicBitSet.initEmpty(allocator, 300);
     try testing.expectEqual(@as(usize, 0), a.count());
@@ -1752,7 +1762,7 @@ test "DynamicBitSet" {
     }
 }
 
-test "StaticBitSet" {
+test StaticBitSet {
     try testing.expectEqual(IntegerBitSet(0), StaticBitSet(0));
     try testing.expectEqual(IntegerBitSet(5), StaticBitSet(5));
     try testing.expectEqual(IntegerBitSet(@bitSizeOf(usize)), StaticBitSet(@bitSizeOf(usize)));

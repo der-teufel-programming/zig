@@ -276,30 +276,8 @@ pub fn readBoundedBytes(self: Self, comptime num_bytes: usize) anyerror!std.Boun
     return result;
 }
 
-/// Reads a native-endian integer
-pub fn readIntNative(self: Self, comptime T: type) anyerror!T {
-    const bytes = try self.readBytesNoEof(@as(u16, @intCast((@as(u17, @typeInfo(T).Int.bits) + 7) / 8)));
-    return mem.readIntNative(T, &bytes);
-}
-
-/// Reads a foreign-endian integer
-pub fn readIntForeign(self: Self, comptime T: type) anyerror!T {
-    const bytes = try self.readBytesNoEof(@as(u16, @intCast((@as(u17, @typeInfo(T).Int.bits) + 7) / 8)));
-    return mem.readIntForeign(T, &bytes);
-}
-
-pub fn readIntLittle(self: Self, comptime T: type) anyerror!T {
-    const bytes = try self.readBytesNoEof(@as(u16, @intCast((@as(u17, @typeInfo(T).Int.bits) + 7) / 8)));
-    return mem.readIntLittle(T, &bytes);
-}
-
-pub fn readIntBig(self: Self, comptime T: type) anyerror!T {
-    const bytes = try self.readBytesNoEof(@as(u16, @intCast((@as(u17, @typeInfo(T).Int.bits) + 7) / 8)));
-    return mem.readIntBig(T, &bytes);
-}
-
-pub fn readInt(self: Self, comptime T: type, endian: std.builtin.Endian) anyerror!T {
-    const bytes = try self.readBytesNoEof(@as(u16, @intCast((@as(u17, @typeInfo(T).Int.bits) + 7) / 8)));
+pub inline fn readInt(self: Self, comptime T: type, endian: std.builtin.Endian) anyerror!T {
+    const bytes = try self.readBytesNoEof(@divExact(@typeInfo(T).int.bits, 8));
     return mem.readInt(T, &bytes, endian);
 }
 
@@ -348,15 +326,15 @@ pub fn isBytes(self: Self, slice: []const u8) anyerror!bool {
 
 pub fn readStruct(self: Self, comptime T: type) anyerror!T {
     // Only extern and packed structs have defined in-memory layout.
-    comptime assert(@typeInfo(T).Struct.layout != .Auto);
+    comptime assert(@typeInfo(T).@"struct".layout != .auto);
     var res: [1]T = undefined;
     try self.readNoEof(mem.sliceAsBytes(res[0..]));
     return res[0];
 }
 
-pub fn readStructBig(self: Self, comptime T: type) anyerror!T {
+pub fn readStructEndian(self: Self, comptime T: type, endian: std.builtin.Endian) anyerror!T {
     var res = try self.readStruct(T);
-    if (native_endian != std.builtin.Endian.Big) {
+    if (native_endian != endian) {
         mem.byteSwapAllFields(T, &res);
     }
     return res;
@@ -370,7 +348,7 @@ pub fn readEnum(self: Self, comptime Enum: type, endian: std.builtin.Endian) any
         /// An integer was read, but it did not match any of the tags in the supplied enum.
         InvalidValue,
     };
-    const type_info = @typeInfo(Enum).Enum;
+    const type_info = @typeInfo(Enum).@"enum";
     const tag = try self.readInt(type_info.tag_type, endian);
 
     inline for (std.meta.fields(Enum)) |field| {
@@ -380,6 +358,18 @@ pub fn readEnum(self: Self, comptime Enum: type, endian: std.builtin.Endian) any
     }
 
     return E.InvalidValue;
+}
+
+/// Reads the stream until the end, ignoring all the data.
+/// Returns the number of bytes discarded.
+pub fn discard(self: Self) anyerror!u64 {
+    var trash: [4096]u8 = undefined;
+    var index: u64 = 0;
+    while (true) {
+        const n = try self.read(&trash);
+        if (n == 0) return index;
+        index += n;
+    }
 }
 
 const std = @import("../std.zig");

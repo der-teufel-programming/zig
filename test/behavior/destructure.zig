@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const expect = std.testing.expect;
 
@@ -7,6 +8,7 @@ test "simple destructure" {
         fn doTheTest() !void {
             var x: u32 = undefined;
             x, const y, var z: u64 = .{ 1, @as(u16, 2), 3 };
+            _ = &z;
 
             comptime assert(@TypeOf(y) == u16);
 
@@ -22,20 +24,55 @@ test "simple destructure" {
 
 test "destructure with comptime syntax" {
     const S = struct {
-        fn doTheTest() void {
-            comptime var x: f32 = undefined;
-            comptime x, const y, var z = .{ 0.5, 123, 456 }; // z is a comptime var
+        fn doTheTest() !void {
+            {
+                comptime var x: f32 = undefined;
+                comptime x, const y, var z = .{ 0.5, 123, 456 }; // z is a comptime var
+                _ = &z;
 
-            comptime assert(@TypeOf(y) == comptime_int);
-            comptime assert(@TypeOf(z) == comptime_int);
-            comptime assert(x == 0.5);
-            comptime assert(y == 123);
-            comptime assert(z == 456);
+                comptime assert(@TypeOf(y) == comptime_int);
+                comptime assert(@TypeOf(z) == comptime_int);
+                comptime assert(x == 0.5);
+                comptime assert(y == 123);
+                comptime assert(z == 456);
+            }
+            {
+                var w: u8, var x: u8 = .{ 1, 2 };
+                w, var y: u8 = .{ 3, 4 };
+                var z: u8, x = .{ 5, 6 };
+                y, z = .{ 7, 8 };
+                {
+                    w += 1;
+                    x -= 2;
+                    y *= 3;
+                    z /= 4;
+                }
+                try expect(w == 4);
+                try expect(x == 4);
+                try expect(y == 21);
+                try expect(z == 2);
+            }
+            {
+                comptime var w, var x = .{ 1, 2 };
+                comptime w, var y = .{ 3, 4 };
+                comptime var z, x = .{ 5, 6 };
+                comptime y, z = .{ 7, 8 };
+                comptime {
+                    w += 1;
+                    x -= 2;
+                    y *= 3;
+                    z /= 4;
+                }
+                comptime assert(w == 4);
+                comptime assert(x == 4);
+                comptime assert(y == 21);
+                comptime assert(z == 2);
+            }
         }
     };
 
-    S.doTheTest();
-    comptime S.doTheTest();
+    try S.doTheTest();
+    try comptime S.doTheTest();
 }
 
 test "destructure from labeled block" {
@@ -112,6 +149,7 @@ test "destructure of comptime-known tuple is comptime-known" {
 test "destructure of comptime-known tuple where some destinations are runtime-known is comptime-known" {
     var z: u32 = undefined;
     var x: u8, const y, z = .{ 1, 2, 3 };
+    _ = &x;
 
     comptime assert(@TypeOf(y) == comptime_int);
     comptime assert(y == 2);
@@ -122,6 +160,7 @@ test "destructure of comptime-known tuple where some destinations are runtime-kn
 
 test "destructure of tuple with comptime fields results in some comptime-known values" {
     var runtime: u32 = 42;
+    _ = &runtime;
     const a, const b, const c, const d = .{ 123, runtime, 456, runtime };
 
     // a, c are comptime-known
@@ -137,4 +176,15 @@ test "destructure of tuple with comptime fields results in some comptime-known v
 
     try expect(b == 42);
     try expect(d == 42);
+}
+
+test "destructure vector" {
+    const vec: @Vector(2, i32) = .{ 1, 2 };
+    const x, const y = vec;
+
+    comptime assert(@TypeOf(x) == i32);
+    comptime assert(@TypeOf(y) == i32);
+
+    try expect(x == 1);
+    try expect(y == 2);
 }

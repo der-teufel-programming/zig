@@ -1,11 +1,13 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const math = std.math;
 const mem = std.mem;
+const native_endian = builtin.cpu.arch.endian();
 
 /// The Keccak-f permutation.
 pub fn KeccakF(comptime f: u11) type {
-    comptime assert(f > 200 and f <= 1600 and f % 200 == 0); // invalid bit size
+    comptime assert(f >= 200 and f <= 1600 and f % 200 == 0); // invalid bit size
     const T = std.meta.Int(.unsigned, f / 25);
     const Block = [25]T;
 
@@ -43,7 +45,7 @@ pub fn KeccakF(comptime f: u11) type {
         pub fn init(bytes: [block_bytes]u8) Self {
             var self: Self = undefined;
             inline for (&self.st, 0..) |*r, i| {
-                r.* = mem.readIntLittle(T, bytes[@sizeOf(T) * i ..][0..@sizeOf(T)]);
+                r.* = mem.readInt(T, bytes[@sizeOf(T) * i ..][0..@sizeOf(T)], .little);
             }
             return self;
         }
@@ -64,12 +66,12 @@ pub fn KeccakF(comptime f: u11) type {
         pub fn setBytes(self: *Self, bytes: []const u8) void {
             var i: usize = 0;
             while (i + @sizeOf(T) <= bytes.len) : (i += @sizeOf(T)) {
-                self.st[i / @sizeOf(T)] = mem.readIntLittle(T, bytes[i..][0..@sizeOf(T)]);
+                self.st[i / @sizeOf(T)] = mem.readInt(T, bytes[i..][0..@sizeOf(T)], .little);
             }
             if (i < bytes.len) {
                 var padded = [_]u8{0} ** @sizeOf(T);
                 @memcpy(padded[0 .. bytes.len - i], bytes[i..]);
-                self.st[i / @sizeOf(T)] = mem.readIntLittle(T, padded[0..]);
+                self.st[i / @sizeOf(T)] = mem.readInt(T, padded[0..], .little);
             }
         }
 
@@ -83,12 +85,12 @@ pub fn KeccakF(comptime f: u11) type {
         pub fn addBytes(self: *Self, bytes: []const u8) void {
             var i: usize = 0;
             while (i + @sizeOf(T) <= bytes.len) : (i += @sizeOf(T)) {
-                self.st[i / @sizeOf(T)] ^= mem.readIntLittle(T, bytes[i..][0..@sizeOf(T)]);
+                self.st[i / @sizeOf(T)] ^= mem.readInt(T, bytes[i..][0..@sizeOf(T)], .little);
             }
             if (i < bytes.len) {
                 var padded = [_]u8{0} ** @sizeOf(T);
                 @memcpy(padded[0 .. bytes.len - i], bytes[i..]);
-                self.st[i / @sizeOf(T)] ^= mem.readIntLittle(T, padded[0..]);
+                self.st[i / @sizeOf(T)] ^= mem.readInt(T, padded[0..], .little);
             }
         }
 
@@ -96,11 +98,11 @@ pub fn KeccakF(comptime f: u11) type {
         pub fn extractBytes(self: *Self, out: []u8) void {
             var i: usize = 0;
             while (i + @sizeOf(T) <= out.len) : (i += @sizeOf(T)) {
-                mem.writeIntLittle(T, out[i..][0..@sizeOf(T)], self.st[i / @sizeOf(T)]);
+                mem.writeInt(T, out[i..][0..@sizeOf(T)], self.st[i / @sizeOf(T)], .little);
             }
             if (i < out.len) {
                 var padded = [_]u8{0} ** @sizeOf(T);
-                mem.writeIntLittle(T, padded[0..], self.st[i / @sizeOf(T)]);
+                mem.writeInt(T, padded[0..], self.st[i / @sizeOf(T)], .little);
                 @memcpy(out[i..], padded[0 .. out.len - i]);
             }
         }
@@ -111,14 +113,14 @@ pub fn KeccakF(comptime f: u11) type {
 
             var i: usize = 0;
             while (i + @sizeOf(T) <= in.len) : (i += @sizeOf(T)) {
-                const x = mem.readIntNative(T, in[i..][0..@sizeOf(T)]) ^ mem.nativeToLittle(T, self.st[i / @sizeOf(T)]);
-                mem.writeIntNative(T, out[i..][0..@sizeOf(T)], x);
+                const x = mem.readInt(T, in[i..][0..@sizeOf(T)], native_endian) ^ mem.nativeToLittle(T, self.st[i / @sizeOf(T)]);
+                mem.writeInt(T, out[i..][0..@sizeOf(T)], x, native_endian);
             }
             if (i < in.len) {
                 var padded = [_]u8{0} ** @sizeOf(T);
                 @memcpy(padded[0 .. in.len - i], in[i..]);
-                const x = mem.readIntNative(T, &padded) ^ mem.nativeToLittle(T, self.st[i / @sizeOf(T)]);
-                mem.writeIntNative(T, &padded, x);
+                const x = mem.readInt(T, &padded, native_endian) ^ mem.nativeToLittle(T, self.st[i / @sizeOf(T)]);
+                mem.writeInt(T, &padded, x, native_endian);
                 @memcpy(out[i..], padded[0 .. in.len - i]);
             }
         }
@@ -130,7 +132,7 @@ pub fn KeccakF(comptime f: u11) type {
 
         /// Clear the entire state, disabling compiler optimizations.
         pub fn secureZero(self: *Self) void {
-            std.crypto.utils.secureZero(T, &self.st);
+            std.crypto.secureZero(T, &self.st);
         }
 
         inline fn round(self: *Self, rc: T) void {
@@ -193,8 +195,8 @@ pub fn KeccakF(comptime f: u11) type {
 }
 
 /// A generic Keccak-P state.
-pub fn State(comptime f: u11, comptime capacity: u11, comptime delim: u8, comptime rounds: u5) type {
-    comptime assert(f > 200 and f <= 1600 and f % 200 == 0); // invalid state size
+pub fn State(comptime f: u11, comptime capacity: u11, comptime rounds: u5) type {
+    comptime assert(f >= 200 and f <= 1600 and f % 200 == 0); // invalid state size
     comptime assert(capacity < f and capacity % 8 == 0); // invalid capacity size
 
     return struct {
@@ -204,6 +206,9 @@ pub fn State(comptime f: u11, comptime capacity: u11, comptime delim: u8, compti
         pub const rate = KeccakF(f).block_bytes - capacity / 8;
         /// Keccak does not have any options.
         pub const Options = struct {};
+
+        /// The input delimiter.
+        delim: u8,
 
         offset: usize = 0,
         buf: [rate]u8 = undefined,
@@ -236,10 +241,28 @@ pub fn State(comptime f: u11, comptime capacity: u11, comptime delim: u8, compti
             }
         }
 
+        /// Initialize the state from a slice of bytes.
+        pub fn init(bytes: [f / 8]u8) Self {
+            return .{ .st = KeccakF(f).init(bytes) };
+        }
+
+        /// Permute the state
+        pub fn permute(self: *Self) void {
+            self.st.permuteR(rounds);
+            self.offset = 0;
+        }
+
+        /// Align the input to the rate boundary.
+        pub fn fillBlock(self: *Self) void {
+            self.st.addBytes(self.buf[0..self.offset]);
+            self.st.permuteR(rounds);
+            self.offset = 0;
+        }
+
         /// Mark the end of the input.
         pub fn pad(self: *Self) void {
             self.st.addBytes(self.buf[0..self.offset]);
-            self.st.addByte(delim, self.offset);
+            self.st.addByte(self.delim, self.offset);
             self.st.addByte(0x80, rate - 1);
             self.st.permuteR(rounds);
             self.offset = 0;

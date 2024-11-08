@@ -13,9 +13,21 @@ export fn f() void {
     _ = a;
 }
 
+const B = struct { u32, u32 };
+export fn g() void {
+    const b = B{0};
+    _ = b;
+}
+export fn h() void {
+    const c = B{};
+    _ = c;
+}
 // error
 // backend=stage2
 // target=native
 //
 // :9:16: error: missing struct field: x
-// :1:11: note: struct 'tmp.A' declared here
+// :1:11: note: struct declared here
+// :18:16: error: missing tuple field with index 1
+// :22:16: error: missing tuple field with index 0
+// :22:16: note: missing tuple field with index 1

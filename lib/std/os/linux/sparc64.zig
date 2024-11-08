@@ -10,8 +10,8 @@ const linux = std.os.linux;
 const SYS = linux.SYS;
 const sockaddr = linux.sockaddr;
 const socklen_t = linux.socklen_t;
-const iovec = std.os.iovec;
-const iovec_const = std.os.iovec_const;
+const iovec = std.posix.iovec;
+const iovec_const = std.posix.iovec_const;
 const timespec = linux.timespec;
 
 pub fn syscall_pipe(fd: *[2]i32) usize {
@@ -178,10 +178,51 @@ pub fn syscall6(
     );
 }
 
-const CloneFn = *const fn (arg: usize) callconv(.C) u8;
-
-/// This matches the libc clone function.
-pub extern fn clone(func: CloneFn, stack: usize, flags: usize, arg: usize, ptid: *i32, tls: usize, ctid: *i32) usize;
+pub fn clone() callconv(.Naked) usize {
+    // __clone(func, stack, flags, arg, ptid, tls, ctid)
+    //         i0,   i1,    i2,    i3,  i4,   i5,  sp
+    //
+    // syscall(SYS_clone, flags, stack, ptid, tls, ctid)
+    //         g1         o0,    o1,    o2,   o3,  o4
+    asm volatile (
+        \\ save %%sp, -192, %%sp
+        \\ # Save the func pointer and the arg pointer
+        \\ mov %%i0, %%g2
+        \\ mov %%i3, %%g3
+        \\ # Shuffle the arguments
+        \\ mov 217, %%g1 // SYS_clone
+        \\ mov %%i2, %%o0
+        \\ # Add some extra space for the initial frame
+        \\ sub %%i1, 176 + 2047, %%o1
+        \\ mov %%i4, %%o2
+        \\ mov %%i5, %%o3
+        \\ ldx [%%fp + 0x8af], %%o4
+        \\ t 0x6d
+        \\ bcs,pn %%xcc, 2f
+        \\ nop
+        \\ # The child pid is returned in o0 while o1 tells if this
+        \\ # process is # the child (=1) or the parent (=0).
+        \\ brnz %%o1, 1f
+        \\ nop
+        \\ # Parent process, return the child pid
+        \\ mov %%o0, %%i0
+        \\ ret
+        \\ restore
+        \\1:
+        \\ # Child process, call func(arg)
+        \\ mov %%g0, %%fp
+        \\ call %%g2
+        \\ mov %%g3, %%o0
+        \\ # Exit
+        \\ mov 1, %%g1 // SYS_exit
+        \\ t 0x6d
+        \\2:
+        \\ # The syscall failed
+        \\ sub %%g0, %%o0, %%i0
+        \\ ret
+        \\ restore
+    );
+}
 
 pub const restore = restore_rt;
 
@@ -194,29 +235,6 @@ pub fn restore_rt() callconv(.C) void {
         : "memory", "xcc", "o0", "o1", "o2", "o3", "o4", "o5", "o7"
     );
 }
-
-pub const O = struct {
-    pub const CREAT = 0x200;
-    pub const EXCL = 0x800;
-    pub const NOCTTY = 0x8000;
-    pub const TRUNC = 0x400;
-    pub const APPEND = 0x8;
-    pub const NONBLOCK = 0x4000;
-    pub const SYNC = 0x802000;
-    pub const DSYNC = 0x2000;
-    pub const RSYNC = SYNC;
-    pub const DIRECTORY = 0x10000;
-    pub const NOFOLLOW = 0x20000;
-    pub const CLOEXEC = 0x400000;
-
-    pub const ASYNC = 0x40;
-    pub const DIRECT = 0x100000;
-    pub const LARGEFILE = 0;
-    pub const NOATIME = 0x200000;
-    pub const PATH = 0x1000000;
-    pub const TMPFILE = 0x2010000;
-    pub const NDELAY = NONBLOCK | 0x4;
-};
 
 pub const F = struct {
     pub const DUPFD = 0;
@@ -239,26 +257,6 @@ pub const F = struct {
     pub const GETOWN_EX = 16;
 
     pub const GETOWNER_UIDS = 17;
-};
-
-pub const LOCK = struct {
-    pub const SH = 1;
-    pub const EX = 2;
-    pub const NB = 4;
-    pub const UN = 8;
-};
-
-pub const MAP = struct {
-    /// stack-like segment
-    pub const GROWSDOWN = 0x0200;
-    /// ETXTBSY
-    pub const DENYWRITE = 0x0800;
-    /// mark it as an executable
-    pub const EXECUTABLE = 0x1000;
-    /// pages are locked
-    pub const LOCKED = 0x0100;
-    /// don't check for reservations
-    pub const NORESERVE = 0x0040;
 };
 
 pub const VDSO = struct {
@@ -337,13 +335,13 @@ pub const Stat = extern struct {
 };
 
 pub const timeval = extern struct {
-    tv_sec: isize,
-    tv_usec: i32,
+    sec: isize,
+    usec: i32,
 };
 
 pub const timezone = extern struct {
-    tz_minuteswest: i32,
-    tz_dsttime: i32,
+    minuteswest: i32,
+    dsttime: i32,
 };
 
 // TODO I'm not sure if the code below is correct, need someone with more
@@ -445,65 +443,8 @@ pub const ucontext_t = extern struct {
     sigmask: u64,
     mcontext: mcontext_t,
     stack: stack_t,
-    sigmask: sigset_t,
+    sigset: sigset_t,
 };
 
-pub const rlimit_resource = enum(c_int) {
-    /// Per-process CPU limit, in seconds.
-    CPU,
-
-    /// Largest file that can be created, in bytes.
-    FSIZE,
-
-    /// Maximum size of data segment, in bytes.
-    DATA,
-
-    /// Maximum size of stack segment, in bytes.
-    STACK,
-
-    /// Largest core file that can be created, in bytes.
-    CORE,
-
-    /// Largest resident set size, in bytes.
-    /// This affects swapping; processes that are exceeding their
-    /// resident set size will be more likely to have physical memory
-    /// taken from them.
-    RSS,
-
-    /// Number of open files.
-    NOFILE,
-
-    /// Number of processes.
-    NPROC,
-
-    /// Locked-in-memory address space.
-    MEMLOCK,
-
-    /// Address space limit.
-    AS,
-
-    /// Maximum number of file locks.
-    LOCKS,
-
-    /// Maximum number of pending signals.
-    SIGPENDING,
-
-    /// Maximum bytes in POSIX message queues.
-    MSGQUEUE,
-
-    /// Maximum nice priority allowed to raise to.
-    /// Nice levels 19 .. -20 correspond to 0 .. 39
-    /// values of this resource limit.
-    NICE,
-
-    /// Maximum realtime priority allowed for non-priviledged
-    /// processes.
-    RTPRIO,
-
-    /// Maximum CPU time in µs that a process scheduled under a real-time
-    /// scheduling policy may consume without making a blocking system
-    /// call before being forcibly descheduled.
-    RTTIME,
-
-    _,
-};
+/// TODO
+pub const getcontext = {};

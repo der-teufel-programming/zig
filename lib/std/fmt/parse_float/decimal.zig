@@ -63,7 +63,7 @@ pub fn Decimal(comptime T: type) type {
         pub const max_digits_without_overflow = if (MantissaT == u64) 19 else 38;
         pub const decimal_point_range = if (MantissaT == u64) 2047 else 32767;
         pub const min_exponent = if (MantissaT == u64) -324 else -4966;
-        pub const max_exponent = if (MantissaT == u64) 310 else 4933;
+        pub const max_exponent = if (MantissaT == u64) 310 else 4934;
         pub const max_decimal_digits = if (MantissaT == u64) 18 else 37;
 
         /// The number of significant digits in the decimal.
@@ -241,18 +241,18 @@ pub fn Decimal(comptime T: type) type {
             var d = Self.new();
             var stream = FloatStream.init(s);
 
-            stream.skipChars2('0', '_');
+            stream.skipChars("0_");
             while (stream.scanDigit(10)) |digit| {
                 d.tryAddDigit(digit);
             }
 
-            if (stream.firstIs('.')) {
+            if (stream.firstIs(".")) {
                 stream.advance(1);
                 const marker = stream.offsetTrue();
 
                 // Skip leading zeroes
                 if (d.num_digits == 0) {
-                    stream.skipChars('0');
+                    stream.skipChars("0");
                 }
 
                 while (stream.hasLen(8) and d.num_digits + 8 < max_digits) {
@@ -260,7 +260,7 @@ pub fn Decimal(comptime T: type) type {
                     if (!isEightDigits(v)) {
                         break;
                     }
-                    std.mem.writeIntSliceLittle(u64, d.digits[d.num_digits..], v - 0x3030_3030_3030_3030);
+                    std.mem.writeInt(u64, d.digits[d.num_digits..][0..8], v - 0x3030_3030_3030_3030, .little);
                     d.num_digits += 8;
                     stream.advance(8);
                 }
@@ -292,13 +292,13 @@ pub fn Decimal(comptime T: type) type {
                     d.num_digits = max_digits;
                 }
             }
-            if (stream.firstIsLower('e')) {
+            if (stream.firstIsLower("e")) {
                 stream.advance(1);
                 var neg_exp = false;
-                if (stream.firstIs('-')) {
+                if (stream.firstIs("-")) {
                     neg_exp = true;
                     stream.advance(1);
-                } else if (stream.firstIs('+')) {
+                } else if (stream.firstIs("+")) {
                     stream.advance(1);
                 }
                 var exp_num: i32 = 0;

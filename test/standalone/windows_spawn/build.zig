@@ -6,20 +6,20 @@ pub fn build(b: *std.Build) void {
     b.default_step = test_step;
 
     const optimize: std.builtin.OptimizeMode = .Debug;
-    const target: std.zig.CrossTarget = .{};
+    const target = b.graph.host;
 
     if (builtin.os.tag != .windows) return;
 
     const hello = b.addExecutable(.{
         .name = "hello",
-        .root_source_file = .{ .path = "hello.zig" },
+        .root_source_file = b.path("hello.zig"),
         .optimize = optimize,
         .target = target,
     });
 
     const main = b.addExecutable(.{
         .name = "main",
-        .root_source_file = .{ .path = "main.zig" },
+        .root_source_file = b.path("main.zig"),
         .optimize = optimize,
         .target = target,
     });

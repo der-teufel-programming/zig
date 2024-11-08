@@ -7,13 +7,14 @@ pub fn build(b: *std.Build) void {
     b.default_step = test_step;
 
     const optimize: std.builtin.OptimizeMode = .Debug;
-    const target = b.standardTargetOptions(.{});
-
-    if (builtin.os.tag != .windows) return;
+    const target = if (builtin.os.tag == .windows)
+        b.standardTargetOptions(.{})
+    else
+        b.resolveTargetQuery(.{ .os_tag = .windows });
 
     const exe = b.addExecutable(.{
         .name = "main",
-        .root_source_file = .{ .path = "main.zig" },
+        .root_source_file = b.path("main.zig"),
         .optimize = optimize,
         .target = target,
     });
@@ -23,7 +24,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .target = target,
     });
-    lib.addCSourceFile(.{ .file = .{ .path = "shared_lib.c" }, .flags = &.{"-gdwarf"} });
+    lib.addCSourceFile(.{ .file = b.path("shared_lib.c"), .flags = &.{"-gdwarf"} });
     lib.linkLibC();
     exe.linkLibrary(lib);
 

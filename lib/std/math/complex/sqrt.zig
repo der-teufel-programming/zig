@@ -12,8 +12,8 @@ const Complex = cmath.Complex;
 
 /// Returns the square root of z. The real and imaginary parts of the result have the same sign
 /// as the imaginary part of z.
-pub fn sqrt(z: anytype) @TypeOf(z) {
-    const T = @TypeOf(z.re);
+pub fn sqrt(z: anytype) Complex(@TypeOf(z.re, z.im)) {
+    const T = @TypeOf(z.re, z.im);
 
     return switch (T) {
         f32 => sqrt32(z),
@@ -43,7 +43,7 @@ fn sqrt32(z: Complex(f32)) Complex(f32) {
         // sqrt(-inf + i nan)   = nan +- inf i
         // sqrt(-inf + iy)      = 0 + inf i
         if (math.signbit(x)) {
-            return Complex(f32).init(@abs(x - y), math.copysign(x, y));
+            return Complex(f32).init(@abs(y - y), math.copysign(x, y));
         } else {
             return Complex(f32).init(x, math.copysign(y - y, y));
         }
@@ -56,13 +56,13 @@ fn sqrt32(z: Complex(f32)) Complex(f32) {
     const dy = @as(f64, y);
 
     if (dx >= 0) {
-        const t = @sqrt((dx + math.hypot(f64, dx, dy)) * 0.5);
+        const t = @sqrt((dx + math.hypot(dx, dy)) * 0.5);
         return Complex(f32).init(
             @as(f32, @floatCast(t)),
             @as(f32, @floatCast(dy / (2.0 * t))),
         );
     } else {
-        const t = @sqrt((-dx + math.hypot(f64, dx, dy)) * 0.5);
+        const t = @sqrt((-dx + math.hypot(dx, dy)) * 0.5);
         return Complex(f32).init(
             @as(f32, @floatCast(@abs(y) / (2.0 * t))),
             @as(f32, @floatCast(math.copysign(t, y))),
@@ -94,7 +94,7 @@ fn sqrt64(z: Complex(f64)) Complex(f64) {
         // sqrt(-inf + i nan)   = nan +- inf i
         // sqrt(-inf + iy)      = 0 + inf i
         if (math.signbit(x)) {
-            return Complex(f64).init(@abs(x - y), math.copysign(x, y));
+            return Complex(f64).init(@abs(y - y), math.copysign(x, y));
         } else {
             return Complex(f64).init(x, math.copysign(y - y, y));
         }
@@ -112,10 +112,10 @@ fn sqrt64(z: Complex(f64)) Complex(f64) {
 
     var result: Complex(f64) = undefined;
     if (x >= 0) {
-        const t = @sqrt((x + math.hypot(f64, x, y)) * 0.5);
+        const t = @sqrt((x + math.hypot(x, y)) * 0.5);
         result = Complex(f64).init(t, y / (2.0 * t));
     } else {
-        const t = @sqrt((-x + math.hypot(f64, x, y)) * 0.5);
+        const t = @sqrt((-x + math.hypot(x, y)) * 0.5);
         result = Complex(f64).init(@abs(y) / (2.0 * t), math.copysign(t, y));
     }
 
@@ -127,20 +127,20 @@ fn sqrt64(z: Complex(f64)) Complex(f64) {
     return result;
 }
 
-const epsilon = 0.0001;
-
-test "complex.csqrt32" {
+test sqrt32 {
+    const epsilon = math.floatEps(f32);
     const a = Complex(f32).init(5, 3);
     const c = sqrt(a);
 
-    try testing.expect(math.approxEqAbs(f32, c.re, 2.327117, epsilon));
-    try testing.expect(math.approxEqAbs(f32, c.im, 0.644574, epsilon));
+    try testing.expectApproxEqAbs(2.3271174, c.re, epsilon);
+    try testing.expectApproxEqAbs(0.6445742, c.im, epsilon);
 }
 
-test "complex.csqrt64" {
+test sqrt64 {
+    const epsilon = math.floatEps(f64);
     const a = Complex(f64).init(5, 3);
     const c = sqrt(a);
 
-    try testing.expect(math.approxEqAbs(f64, c.re, 2.3271175190399496, epsilon));
-    try testing.expect(math.approxEqAbs(f64, c.im, 0.6445742373246469, epsilon));
+    try testing.expectApproxEqAbs(2.3271175190399496, c.re, epsilon);
+    try testing.expectApproxEqAbs(0.6445742373246469, c.im, epsilon);
 }

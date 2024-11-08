@@ -140,13 +140,13 @@ pub fn parse(text: []const u8) !Version {
     return ver;
 }
 
-fn parseNum(text: []const u8) !usize {
+fn parseNum(text: []const u8) error{ InvalidVersion, Overflow }!usize {
     // Leading zeroes are not allowed.
     if (text.len > 1 and text[0] == '0') return error.InvalidVersion;
 
     return std.fmt.parseUnsigned(usize, text, 10) catch |err| switch (err) {
         error.InvalidCharacter => return error.InvalidVersion,
-        else => |e| return e,
+        error.Overflow => return error.Overflow,
     };
 }
 
@@ -166,7 +166,7 @@ pub fn format(
 const expect = std.testing.expect;
 const expectError = std.testing.expectError;
 
-test "SemanticVersion format" {
+test format {
     // Many of these test strings are from https://github.com/semver/semver.org/issues/59#issuecomment-390854010.
 
     // Valid version strings should be accepted.
@@ -277,7 +277,7 @@ test "SemanticVersion format" {
     if (parse(big_invalid)) |ver| std.debug.panic("expected error, found {}", .{ver}) else |_| {}
 }
 
-test "SemanticVersion precedence" {
+test "precedence" {
     // SemVer 2 spec 11.2 example: 1.0.0 < 2.0.0 < 2.1.0 < 2.1.1.
     try expect(order(try parse("1.0.0"), try parse("2.0.0")) == .lt);
     try expect(order(try parse("2.0.0"), try parse("2.1.0")) == .lt);
@@ -299,7 +299,7 @@ test "SemanticVersion precedence" {
 
 test "zig_version" {
     // An approximate Zig build that predates this test.
-    const older_version = .{ .major = 0, .minor = 8, .patch = 0, .pre = "dev.874" };
+    const older_version: Version = .{ .major = 0, .minor = 8, .patch = 0, .pre = "dev.874" };
 
     // Simulated compatibility check using Zig version.
     const compatible = comptime @import("builtin").zig_version.order(older_version) == .gt;

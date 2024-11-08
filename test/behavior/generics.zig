@@ -89,6 +89,7 @@ fn max_f64(a: f64, b: f64) f64 {
 test "type constructed by comptime function call" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     var l: SimpleList(10) = undefined;
     l.array[0] = 10;
@@ -102,6 +103,7 @@ test "type constructed by comptime function call" {
 
 fn SimpleList(comptime L: usize) type {
     var mutable_T = u8;
+    _ = &mutable_T;
     const T = mutable_T;
     return struct {
         array: [L]T,
@@ -171,12 +173,13 @@ test "generic fn keeps non-generic parameter types" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const A = 128;
 
     const S = struct {
         fn f(comptime T: type, s: []T) !void {
-            try expect(A != @typeInfo(@TypeOf(s)).Pointer.alignment);
+            try expect(A != @typeInfo(@TypeOf(s)).pointer.alignment);
         }
     };
 
@@ -205,7 +208,6 @@ fn foo2(arg: anytype) bool {
 
 test "generic struct" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
     var a1 = GenNode(i32){
         .value = 13,
@@ -239,6 +241,7 @@ test "function parameter is generic" {
         }
     };
     var rng: u32 = 2;
+    _ = &rng;
     S.init(rng, S.fill);
 }
 
@@ -255,17 +258,17 @@ test "generic function instantiation turns into comptime call" {
         }
 
         pub fn fieldInfo(comptime T: type, comptime field: FieldEnum(T)) switch (@typeInfo(T)) {
-            .Enum => std.builtin.Type.EnumField,
+            .@"enum" => std.builtin.Type.EnumField,
             else => void,
         } {
-            return @typeInfo(T).Enum.fields[@intFromEnum(field)];
+            return @typeInfo(T).@"enum".fields[@intFromEnum(field)];
         }
 
         pub fn FieldEnum(comptime T: type) type {
             _ = T;
             var enumFields: [1]std.builtin.Type.EnumField = .{.{ .name = "A", .value = 0 }};
             return @Type(.{
-                .Enum = .{
+                .@"enum" = .{
                     .tag_type = u0,
                     .fields = &enumFields,
                     .decls = &.{},
@@ -317,7 +320,7 @@ test "generic function instantiation non-duplicates" {
 
     const S = struct {
         fn copy(comptime T: type, dest: []T, source: []const T) void {
-            @export(foo, .{ .name = "test_generic_instantiation_non_dupe" });
+            @export(&foo, .{ .name = "test_generic_instantiation_non_dupe" });
             for (source, 0..) |s, i| dest[i] = s;
         }
 
@@ -360,7 +363,7 @@ test "nested generic function" {
 
         fn g(_: *const fn (anytype) void) void {}
     };
-    try expect(@typeInfo(@TypeOf(S.g)).Fn.is_generic);
+    try expect(@typeInfo(@TypeOf(S.g)).@"fn".is_generic);
     try S.foo(u32, S.bar, 123);
 }
 
@@ -370,8 +373,12 @@ test "extern function used as generic parameter" {
     const S = struct {
         extern fn usedAsGenericParameterFoo() void;
         extern fn usedAsGenericParameterBar() void;
-        inline fn usedAsGenericParameterBaz(comptime _: anytype) type {
-            return struct {};
+        inline fn usedAsGenericParameterBaz(comptime token: anytype) type {
+            return struct {
+                comptime {
+                    _ = token;
+                }
+            };
         }
     };
     try expect(S.usedAsGenericParameterBaz(S.usedAsGenericParameterFoo) !=
@@ -442,7 +449,6 @@ test "return type of generic function is function pointer" {
 
 test "coerced function body has inequal value with its uncoerced body" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv64) return error.SkipZigTest;
 
     const S = struct {
         const A = B(i32, c);
@@ -458,4 +464,123 @@ test "coerced function body has inequal value with its uncoerced body" {
         }
     };
     try expect(S.A.do() == 1234);
+}
+
+test "generic function returns value from callconv(.C) function" {
+    const S = struct {
+        fn getU8() callconv(.C) u8 {
+            return 123;
+        }
+
+        fn getGeneric(comptime T: type, supplier: fn () callconv(.C) T) T {
+            return supplier();
+        }
+    };
+
+    try testing.expect(S.getGeneric(u8, S.getU8) == 123);
+}
+
+test "union in struct captures argument" {
+    const S = struct {
+        fn BuildType(comptime T: type) type {
+            return struct {
+                val: union {
+                    b: T,
+                },
+            };
+        }
+    };
+    const TestStruct = S.BuildType(u32);
+    const c = TestStruct{ .val = .{ .b = 10 } };
+    try expect(c.val.b == 10);
+}
+
+test "function argument tuple used as struct field" {
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
+
+    const S = struct {
+        fn DeleagateWithContext(comptime Function: type) type {
+            const ArgArgs = std.meta.ArgsTuple(Function);
+            return struct {
+                t: ArgArgs,
+            };
+        }
+
+        const OnConfirm = DeleagateWithContext(fn (bool) void);
+        const CustomDraw = DeleagateWithContext(fn (?OnConfirm) void);
+    };
+
+    var c: S.CustomDraw = undefined;
+    c.t[0] = null;
+    try expect(c.t[0] == null);
+}
+
+test "comptime callconv(.C) function ptr uses comptime type argument" {
+    const S = struct {
+        fn A(
+            comptime T: type,
+            comptime destroycb: ?*const fn (?*T) callconv(.C) void,
+        ) !void {
+            try expect(destroycb == null);
+        }
+    };
+    try S.A(u32, null);
+}
+
+test "call generic function with from function called by the generic function" {
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+
+    const GET = struct {
+        key: []const u8,
+        const GET = @This();
+        const Redis = struct {
+            const Command = struct {
+                fn serialize(self: GET, comptime RootSerializer: type) void {
+                    return RootSerializer.serializeCommand(.{ "GET", self.key });
+                }
+            };
+        };
+    };
+    const ArgSerializer = struct {
+        fn isCommand(comptime T: type) bool {
+            const tid = @typeInfo(T);
+            return (tid == .@"struct" or tid == .@"enum" or tid == .@"union") and
+                @hasDecl(T, "Redis") and @hasDecl(T.Redis, "Command");
+        }
+        fn serializeCommand(command: anytype) void {
+            const CmdT = @TypeOf(command);
+
+            if (comptime isCommand(CmdT)) {
+                return CmdT.Redis.Command.serialize(command, @This());
+            }
+        }
+    };
+
+    ArgSerializer.serializeCommand(GET{ .key = "banana" });
+}
+
+fn StructCapture(comptime T: type) type {
+    return struct {
+        pub fn foo(comptime x: usize) struct { T } {
+            return .{x};
+        }
+    };
+}
+
+test "call generic function that uses capture from function declaration's scope" {
+    if (builtin.zig_backend == .stage2_x86_64 and builtin.target.ofmt != .elf and builtin.target.ofmt != .macho) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+
+    const S = StructCapture(f64);
+    const s = S.foo(123);
+    try expectEqual(123.0, s[0]);
+}
+
+comptime {
+    // The same function parameter instruction being analyzed multiple times
+    // should override the result of the previous analysis.
+    for (0..2) |_| _ = fn (void) void;
 }

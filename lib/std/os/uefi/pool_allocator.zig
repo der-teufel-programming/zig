@@ -34,7 +34,7 @@ const UefiPoolAllocator = struct {
         const unaligned_addr = @intFromPtr(unaligned_ptr);
         const aligned_addr = mem.alignForward(usize, unaligned_addr + @sizeOf(usize), ptr_align);
 
-        var aligned_ptr = unaligned_ptr + (aligned_addr - unaligned_addr);
+        const aligned_ptr = unaligned_ptr + (aligned_addr - unaligned_addr);
         getHeader(aligned_ptr).* = unaligned_ptr;
 
         return aligned_ptr;
@@ -48,11 +48,9 @@ const UefiPoolAllocator = struct {
         ret_addr: usize,
     ) bool {
         _ = ret_addr;
+        _ = log2_old_ptr_align;
 
         if (new_len > buf.len) return false;
-
-        _ = mem.alignAllocLen(buf.len, new_len, log2_old_ptr_align);
-
         return true;
     }
 
@@ -121,9 +119,6 @@ fn uefi_resize(
     std.debug.assert(log2_old_ptr_align <= 3);
 
     if (new_len > buf.len) return false;
-
-    _ = mem.alignAllocLen(buf.len, new_len, 8);
-
     return true;
 }
 
